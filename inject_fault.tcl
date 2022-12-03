@@ -24,7 +24,7 @@ proc base_path {group tile core} {return "/mempool_tb/dut/i_mempool_cluster/gen_
 # == List of nets that contain the state ==
 set state_netlist [list]
 # Regfile
-lappend state_netlist [base_path 0 0 0]/i_snitch_regfile/mem
+lappend state_netlist [base_path 0 0 0]/gen_regfile/i_snitch_regfile/mem
 # LSU state
 set lsu_state_netlist [find signal [base_path 0 0 0]/i_snitch_lsu/*_q]
 set state_netlist [concat $state_netlist $lsu_state_netlist]
@@ -35,9 +35,9 @@ set state_netlist [concat $state_netlist $snitch_state_netlist]
 # == List of combinatorial nets that contain the next state ==
 set next_state_netlist [list]
 # Regfile
-lappend next_state_netlist [base_path 0 0 0]/i_snitch_regfile/waddr_i
-lappend next_state_netlist [base_path 0 0 0]/i_snitch_regfile/wdata_i
-lappend next_state_netlist [base_path 0 0 0]/i_snitch_regfile/we_i
+lappend next_state_netlist [base_path 0 0 0]/gen_regfile/i_snitch_regfile/waddr_i
+lappend next_state_netlist [base_path 0 0 0]/gen_regfile/i_snitch_regfile/wdata_i
+lappend next_state_netlist [base_path 0 0 0]/gen_regfile/i_snitch_regfile/we_i
 # LSU
 set lsu_next_state_netlist [find signal [base_path 0 0 0]/i_snitch_lsu/*_d]
 set next_state_netlist [concat $next_state_netlist $lsu_next_state_netlist]
@@ -93,6 +93,7 @@ lappend assertion_disable_list [base_path 0 0 1]/InstructionInterfaceStable
 lappend assertion_disable_list [base_path 0 0 0]/i_snitch_lsu/invalid_resp_id
 lappend assertion_disable_list [base_path 0 0 1]/i_snitch_lsu/invalid_resp_id
 lappend assertion_disable_list [base_path 0 0 0]/i_snitch_lsu/invalid_req_id
+lappend assertion_disable_list [base_path 0 0 1]/i_snitch_lsu/invalid_req_id
 
 ################
 #  Flip a Bit  #
@@ -363,7 +364,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
       echo "\[Fault Injection\] Time: [RealToTime $now]. Flipped net $net_to_flip from [lindex $flip_return 1] to [lindex $flip_return 2]. Output signals $output_state. New state $new_state_state."
     }
     # Log the result
-    puts $injection_log "$now,$net_to_flip,[lindex $flip_return 0],[lindex $flip_return 1],$output_changed,$new_state_changed"
+    puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
   }
 }
 
