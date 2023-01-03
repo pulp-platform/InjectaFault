@@ -7,10 +7,6 @@
 # Disable transcript
 transcript quietly
 
-##############
-#  Settings  #
-##############
-
 # == Verbosity if the fault injection script ==
 # 0 : No statements at all
 # 1 : Only important initializaion information
@@ -18,59 +14,12 @@ transcript quietly
 # 3 : All information that is possible
 set ::verbosity 2
 
-# == Base Path for the Simulations ==
-proc base_path {group tile core} {return "/mempool_tb/dut/i_mempool_cluster/gen_groups\[$group\]/i_group/gen_tiles\[$tile\]/i_tile/gen_cores\[$core\]/gen_mempool_cc/riscv_core/i_snitch"}
+# Import Netlist procs
+source ../scripts/fault_injection/extract_nets.tcl
 
-# == List of nets that contain the state ==
-set state_netlist [list]
-# Regfile
-lappend state_netlist [base_path 0 0 0]/gen_dmr_master_regfile/i_snitch_regfile/mem
-lappend state_netlist [base_path 0 0 1]/gen_regfile/i_snitch_regfile/mem
-# LSU state
-set lsu_state_netlist [find signal [base_path 0 0 0]/i_snitch_lsu/*_q]
-set state_netlist [concat $state_netlist $lsu_state_netlist]
-# Snitch state
-set snitch_state_netlist [find signal [base_path 0 0 0]/*_q]
-set state_netlist [concat $state_netlist $snitch_state_netlist]
-
-# == List of combinatorial nets that contain the next state ==
-set next_state_netlist [list]
-# Regfile
-#lappend next_state_netlist [base_path 0 0 0]/gen_dmr_master_regfile/i_snitch_regfile/waddr_i
-#lappend next_state_netlist [base_path 0 0 0]/gen_dmr_master_regfile/i_snitch_regfile/wdata_i
-#lappend next_state_netlist [base_path 0 0 0]/gen_dmr_master_regfile/i_snitch_regfile/we_i
-# LSU
-set lsu_next_state_netlist [find signal [base_path 0 0 0]/i_snitch_lsu/*_d]
-set next_state_netlist [concat $next_state_netlist $lsu_next_state_netlist]
-# Snitch state
-# Note: CSRs currently not included
-set snitch_next_state_netlist [find signal [base_path 0 0 0]/*_d]
-set next_state_netlist [concat $next_state_netlist $snitch_next_state_netlist]
-
-# == List of output nets ==
-set output_netlist [list]
-# Snitch outputs
-set snitch_output_netlist [find signal [base_path 0 0 0]/*_o]
-set output_netlist [concat $output_netlist $snitch_output_netlist]
-
-# == Nets to ignore for transient bit flips ==
-# nets used for debugging
-lappend core_netlist_ignore *gen_stack_overflow_check*
-# nets that would crash the simulation if flipped
-lappend core_netlist_ignore *dmr*
-lappend core_netlist_ignore *hart_id*
-lappend core_netlist_ignore *clk_i
-lappend core_netlist_ignore *rst_i
-lappend core_netlist_ignore *wfi_d
-lappend core_netlist_ignore *wake_up_d
-# registers/memories
-lappend core_netlist_ignore *mem
-lappend core_netlist_ignore *_q
-# Others
-# - none -
-
-# == Nets that can be flipped (empty list {} for any random net within the core) ==
-set force_flip_nets [list]
+###################
+#  Test Settings  #
+###################
 
 # == random seed ==
 expr srand(12345)
@@ -81,20 +30,59 @@ expr srand(12345)
 set inject_start_time 2500ns
 
 # == Period of Faults (in clk cycles, 0 for no repeat) ==
-set fault_period 10
+set fault_period 500
 
 # == Time to force-stop simulation (set to 0 for no stop) ==
-set inject_stop_time 3500ns
+set inject_stop_time 0
+
+# == Cores where faults will be injected ==
+set target_cores {{0 0 0} {0 0 1}}
+
+# == Select where to inject faults
+set inject_protected_states 1
+set inject_unprotected_states 0
+set inject_combinatorial_logic 0
+
+# == Nets that can be flipped ==
+# leave empty {} to generate the netlist according to the settings above
+set force_flip_nets [list]
+
+########################################
+#  Finish setup depending on settings  #
+########################################
+
+set inject_netlist $force_flip_nets
+
+# List of combinatorial nets that contain the next state
+set next_state_netlist [list]
+
+# List of output nets
+set output_netlist [list]
 
 # == Assertions to be disabled to prevent simulation failures ==
 # Note: Assertions will only be diabled between the inject start and stop time.
 set assertion_disable_list [list]
-lappend assertion_disable_list [base_path 0 0 0]/InstructionInterfaceStable
-lappend assertion_disable_list [base_path 0 0 1]/InstructionInterfaceStable
-lappend assertion_disable_list [base_path 0 0 0]/i_snitch_lsu/invalid_resp_id
-lappend assertion_disable_list [base_path 0 0 1]/i_snitch_lsu/invalid_resp_id
-lappend assertion_disable_list [base_path 0 0 0]/i_snitch_lsu/invalid_req_id
-lappend assertion_disable_list [base_path 0 0 1]/i_snitch_lsu/invalid_req_id
+
+# Add all targeted cores
+foreach target $target_cores {
+  foreach {group tile core} $target {}
+  set next_state_netlist [concat $next_state_netlist [get_next_state_netlist $group $tile $core]]
+  set output_netlist [concat $output_netlist [get_output_netlist $group $tile $core]]
+  set assertion_disable_list [concat $assertion_disable_list [get_assertions $group $tile $core]]
+}
+
+# check net list selection is forced
+if {[llength $inject_netlist] == 0} {
+  foreach target $target_cores {
+    foreach {group tile core} $target {}
+    if {$inject_protected_states} {
+      set inject_netlist [concat $inject_netlist [get_protected_state_netlist $group $tile $core]]
+    }
+    if {$inject_unprotected_states} {
+      set inject_netlist [concat $inject_netlist [get_unprotected_state_netlist $group $tile $core]]
+    }
+  }
+}
 
 ################
 #  Flip a Bit  #
@@ -132,123 +120,6 @@ proc flipbit {signal_name} {
   return $result
 }
 
-##################################
-#  Net extraction utility procs  #
-##################################
-
-proc get_net_type {signal_name} {
-  set sig_description [examine -describe $signal_name]
-  set type_string [string trim [string range $sig_description 1 [string wordend $sig_description 1]] " \n\r()\[\]{}"]
-  if { $type_string == "Verilog" } { set type_string "Enum"}
-  return $type_string
-}
-
-proc get_net_array_length {signal_name} {
-  set sig_description [examine -describe $signal_name]
-  regexp "\\\[length (\\d+)\\\]" $sig_description -> match
-  return $match
-}
-
-proc get_net_reg_width {signal_name} {
-  set sig_description [examine -describe $signal_name]
-  set length 1
-  if {[regexp "\\\[(\\d+):(\\d+)\\\]" $sig_description -> up_lim low_lim]} {
-    set length [expr $up_lim - $low_lim + 1]
-  }
-  return $length
-}
-
-proc get_record_field_names {signal_name} {
-  set sig_description [examine -describe $signal_name]
-  set matches [regexp -all -inline "Element #\\d* \"\[a-zA-Z_\]\[a-zA-Z0-9_\]*\"" $sig_description]
-  set field_names {}
-  foreach match $matches { lappend field_names [lindex [split $match \"] 1] }
-  return $field_names
-}
-
-###########################################
-#  Recursevely extract all nets and enums #
-###########################################
-
-proc extract_netlists {item_list} {
-  set extract_list [list]
-  foreach item $item_list {
-    set item_type [get_net_type $item]
-    if {$item_type == "Register" || $item_type == "Net" || $item_type == "Enum"} {
-      lappend extract_list $item
-    } elseif { $item_type == "Array"} {
-      set array_length [get_net_array_length $item]
-      for {set i 0}  {$i < $array_length} {incr i} {
-        set new_net "$item\[$i\]"
-        set extract_list [concat $extract_list [extract_netlists $new_net]]
-      }
-    } elseif { $item_type == "Record"} {
-      set fields [get_record_field_names $item]
-      foreach field $fields {
-        set new_net $item.$field
-        set extract_list [concat $extract_list [extract_netlists $new_net]]
-      }
-    } elseif { $item_type == "int"} {
-      # Ignore
-    } else {
-      if { $::verbosity >= 2 } {
-        echo "\[Fault Injection\] Unknown Type $item_type of net $item. Skipping..."
-      }
-    }
-  }
-  return $extract_list
-}
-
-##############################
-#  Get all nets from a core  #
-##############################
-
-proc get_all_core_nets {group tile core} {
-
-  # Path of the core
-  set core_path [base_path $group $tile $core]/*
-
-  # extract all signals from the core
-  set core_netlist [find signal -r $core_path];
-
-  # filter and sort the signals
-  set core_netlist_filtered [list];
-  foreach core_net $core_netlist {
-    set ignore_net 0
-    # ignore any net that matches any ignore pattern
-    foreach ignore_pattern $::core_netlist_ignore {
-      if {[string match $ignore_pattern $core_net]} {
-        set ignore_net 1
-      }
-    }
-    # add all nets that are not ignored
-    if {$ignore_net == 0} {
-      lappend core_netlist_filtered $core_net
-    }
-  }
-
-  # sort the filtered nets alphabetically
-  set core_netlist_filtered [lsort -dictionary $core_netlist_filtered]
-
-  # recursively extract all nets and enums from arrays and structs
-  set core_netlist_extracted [extract_netlists $core_netlist_filtered]
-
-  set num_extracted [llength $core_netlist_extracted]
-  if {$::verbosity >= 1} {
-    echo "\[Fault Injection\] There are $num_extracted nets where faults can be injected in this simulation."
-  }
-
-  # print all nets that were found
-  if {$::verbosity >= 3} {
-    foreach core_net $core_netlist_extracted {
-      echo " - [get_net_reg_width $core_net] bit [get_net_type $core_net] : $core_net"
-    }
-    echo ""
-  }
-
-  return $core_netlist_extracted
-}
-
 ##############################
 #  Fault injection routine   #
 ##############################
@@ -271,8 +142,11 @@ puts $injection_log "timestamp,netname,pre_flip_value,post_flip_value,output_cha
 
 # After the simulation start, get all the nets of the core
 when { $now == 10ns } {
-  if {[llength $force_flip_nets] == 0} {
-    set all_nets_core_0 [get_all_core_nets 0 0 0]
+  if {$inject_combinatorial_logic} {
+    foreach target $target_cores {
+      foreach {group tile core} $target {}
+      set inject_netlist [concat $inject_netlist [get_all_core_nets $group $tile $core]]
+    }
   }
 }
 
@@ -280,6 +154,7 @@ when { $now == 10ns } {
 when "\$now == $inject_start_time" {
   if {$verbosity >= 1} {
     echo "\[Fault Injection\] Starting fault injection."
+    echo "\[Fault Injection\] Selected [llength $inject_netlist] nets for fault injection"
   }
   foreach assertion $assertion_disable_list {
     assertion enable -off $assertion
@@ -290,7 +165,7 @@ when "\$now == $inject_start_time" {
 set prescaler [expr $fault_period - 1]
 when "\$now >= $inject_start_time and clk == \"1'h0\"" {
   incr prescaler
-  if {$prescaler == $fault_period} {
+  if {$prescaler == $fault_period && [llength $inject_netlist] != 0} {
     set prescaler 0
 
     # record the output before the flip
@@ -313,14 +188,8 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
     set success 0
     while {!$success} {
       # get a random net
-      set net_to_flip ""
-      if {[llength $force_flip_nets] == 0} {
-        set idx [expr int(rand()*[llength $all_nets_core_0])]
-        set net_to_flip [lindex $all_nets_core_0 $idx]
-      } else {
-        set idx [expr int(rand()*[llength $force_flip_nets])]
-        set net_to_flip [lindex $force_flip_nets $idx]
-      }
+      set idx [expr int(rand()*[llength $inject_netlist])]
+      set net_to_flip [lindex $inject_netlist $idx]
       # flip the random net
       set flip_return [flipbit $net_to_flip]
       if {[lindex $flip_return 0]} {
