@@ -67,12 +67,14 @@ proc get_protected_master_state_netlist {group tile core} {
   # Snitch state
   if {$::is_dmr_enabled} {
     lappend netlist $base/DMR_state/mst/i_pc/data_q
-    lappend netlist $base/DMR_state/mst/i_wake/data_q
+    lappend netlist $base/DMR_state/mst/i_wfi/data_q
+    lappend netlist $base/DMR_state/mst/i_wake_up/data_q
     lappend netlist $base/DMR_state/mst/i_sb/data_q
   } elseif {$::is_ecc_enabled} {
-    lappend netlist $base/state/ECC/i_pc/data_q
-    lappend netlist $base/state/ECC/i_wake/data_q
-    lappend netlist $base/state/ECC/i_sb/data_q
+    lappend netlist $base/state/TMR/i_pc/data_q
+    lappend netlist $base/state/TMR/i_wfi/data_q
+    lappend netlist $base/state/TMR/i_wake_up/data_q
+    lappend netlist $base/state/TMR/i_sb/data_q
   }
   return $netlist
 }
@@ -99,13 +101,15 @@ proc get_protected_slave_state_netlist {group tile core} {
   # Snitch state
   if {$::is_ecc_enabled} {
     if {$::is_dmr_enabled} {
-      lappend netlist $base/DMR_state/slv/ECC/i_pc/data_q
-      lappend netlist $base/DMR_state/slv/ECC/i_wake/data_q
-      lappend netlist $base/DMR_state/slv/ECC/i_sb/data_q
+      lappend netlist $base/DMR_state/slv/TMR/i_pc/data_q
+      lappend netlist $base/DMR_state/slv/TMR/i_wfi/data_q
+      lappend netlist $base/DMR_state/slv/TMR/i_wake_up/data_q
+      lappend netlist $base/DMR_state/slv/TMR/i_sb/data_q
     } else {
-      lappend netlist $base/state/ECC/i_pc/data_q
-      lappend netlist $base/state/ECC/i_wake/data_q
-      lappend netlist $base/state/ECC/i_sb/data_q
+      lappend netlist $base/state/TMR/i_pc/data_q
+      lappend netlist $base/state/TMR/i_wfi/data_q
+      lappend netlist $base/state/TMR/i_wake_up/data_q
+      lappend netlist $base/state/TMR/i_sb/data_q
     }
   }
   return $netlist
