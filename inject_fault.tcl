@@ -30,7 +30,7 @@ expr srand(12345)
 set inject_start_time 2500ns
 
 # == Period of Faults (in clk cycles, 0 for no repeat) ==
-set fault_period 500
+set fault_period 5
 
 # == Time to force-stop simulation (set to 0 for no stop) ==
 set inject_stop_time 0
@@ -41,6 +41,8 @@ set target_cores {{0 0 0} {0 0 1}}
 # == Select where to inject faults
 set inject_protected_states 1
 set inject_unprotected_states 0
+set inject_protected_regfile 0
+set inject_unprotected_regfile 0
 set inject_combinatorial_logic 0
 
 # == Nets that can be flipped ==
@@ -80,6 +82,12 @@ if {[llength $inject_netlist] == 0} {
     }
     if {$inject_unprotected_states} {
       set inject_netlist [concat $inject_netlist [get_unprotected_state_netlist $group $tile $core]]
+    }
+    if {$inject_protected_regfile} {
+      set inject_netlist [concat $inject_netlist [get_protected_regfile_mem_netlist $group $tile $core]]
+    }
+    if {$inject_unprotected_regfile} {
+      set inject_netlist [concat $inject_netlist [get_unprotected_regfile_mem_netlist $group $tile $core]]
     }
   }
 }
