@@ -41,11 +41,6 @@ proc get_protected_master_state_netlist {group tile core} {
   }
   set base [base_path $group $tile $core]
   set netlist [list]
-  # LSU state
-  if {$::is_ecc_enabled} {
-    lappend netlist $base/i_snitch_lsu/ECC/i_id/data_q
-    lappend netlist $base/i_snitch_lsu/ECC/i_metadata/data_q
-  }
   # Snitch state
   if {$::is_dmr_enabled} {
     lappend netlist $base/DMR_state/mst/i_pc/data_q
@@ -67,11 +62,6 @@ proc get_protected_slave_state_netlist {group tile core} {
   }
   set base [base_path $group $tile $core]
   set netlist [list]
-  # LSU state
-  if {$::is_ecc_enabled} {
-    lappend netlist $base/i_snitch_lsu/ECC/i_id/data_q
-    lappend netlist $base/i_snitch_lsu/ECC/i_metadata/data_q
-  }
   # Snitch state
   if {$::is_ecc_enabled} {
     if {$::is_dmr_enabled} {
@@ -95,12 +85,6 @@ proc get_unprotected_master_state_netlist {group tile core} {
   }
   set base [base_path $group $tile $core]
   set netlist [list]
-  # LSU state
-  if {!$::is_ecc_enabled} {
-    set lsu_netlist [find signal $base/i_snitch_lsu/*_q]
-    set netlist [concat $netlist $lsu_netlist]
-  }
-
   # Snitch state
   if {!$::is_dmr_enabled && !$::is_ecc_enabled} {
     lappend netlist $base/pc_q
@@ -117,12 +101,6 @@ proc get_unprotected_slave_state_netlist {group tile core} {
   }
   set base [base_path $group $tile $core]
   set netlist [list]
-  # LSU state
-  if {!$::is_ecc_enabled} {
-    set lsu_netlist [find signal $base/i_snitch_lsu/*_q]
-    set netlist [concat $netlist $lsu_netlist]
-  }
-
   # Snitch state
   if {!$::is_ecc_enabled} {
     if {$::is_dmr_enabled} {
@@ -238,6 +216,31 @@ proc get_unprotected_regfile_mem_netlist {group tile core} {
     for {set i 0} {$i < 32} {incr i} {
       lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
     }
+  }
+  return $netlist
+}
+
+proc get_protected_lsu_state_netlist {group tile core} {
+  set base [base_path $group $tile $core]
+  set netlist [list]
+  set NumOutstandingLoads [examine -radix decimal $base/i_snitch_lsu/NumOutstandingLoads]
+  # LSU state
+  if {$::is_ecc_enabled} {
+    lappend netlist $base/i_snitch_lsu/ECC/i_id/data_q
+    for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
+      lappend netlist $base/i_snitch_lsu/metadata_q\[$i\]
+    }
+  }
+  return $netlist
+}
+
+proc get_unprotected_lsu_state_netlist {group tile core} {
+  set base [base_path $group $tile $core]
+  set netlist [list]
+  # LSU state
+  if {!$::is_ecc_enabled} {
+    set lsu_netlist [find signal $base/i_snitch_lsu/*_q]
+    set netlist [concat $netlist $lsu_netlist]
   }
   return $netlist
 }
