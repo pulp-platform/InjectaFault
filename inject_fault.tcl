@@ -35,6 +35,9 @@ set fault_period 10
 # == Time to force-stop simulation (set to 0 for no stop) ==
 set inject_stop_time 0
 
+# == Duration of the fault ==
+set fault_duration 0.5ns
+
 # == Cores where faults will be injected ==
 set target_cores {{0 0 0} {0 0 1}}
 
@@ -46,6 +49,9 @@ set inject_unprotected_regfile 0
 set inject_protected_lsu 1
 set inject_unprotected_lsu 0
 set inject_combinatorial_logic 0
+
+# == Allow multiple injections in the same net ==
+set allow_multi_bit_upset 0
 
 # == Nets that can be flipped ==
 # leave empty {} to generate the netlist according to the settings above
@@ -115,7 +121,7 @@ proc flipbit {signal_name} {
     while {$old_value_numeric == $new_value_numeric && [string length $old_value_numeric] != 1} {
       set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
     }
-    force -freeze sim:$signal_name $new_value_numeric -cancel 2ns
+    force -freeze sim:$signal_name $new_value_numeric -cancel $::fault_duration
     set success 1
   } else {
     set flip_signal_name $signal_name
@@ -128,7 +134,7 @@ proc flipbit {signal_name} {
     }
     set new_bit_value "1"
     if {[string index $bin_val [expr $len - 1 - $flip_index]] == "1"} {set new_bit_value "0"}
-    force -freeze sim:$flip_signal_name $new_bit_value -cancel 2ns
+    force -freeze sim:$flip_signal_name $new_bit_value -cancel $::fault_duration
     if {[examine -radix binary $signal_name] != $bin_val} {set success 1}
   }
   set new_value [examine -radixenumsymbolic $signal_name]
@@ -177,6 +183,9 @@ when "\$now == $inject_start_time" {
   }
 }
 
+# Dictionary to keep track of injections
+set inject_dict [dict create]
+
 # periodically inject faults
 set prescaler [expr $fault_period - 1]
 when "\$now >= $inject_start_time and clk == \"1'h0\"" {
@@ -202,55 +211,76 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
     # flip force that member/field in the struct/record with index 0 in the
     # array, not at the array index that was specified.
     set success 0
-    while {!$success} {
+    set attempts 0
+    while {!$success && [incr attempts] < 50} {
       # get a random net
       set idx [expr int(rand()*[llength $inject_netlist])]
       set net_to_flip [lindex $inject_netlist $idx]
+
+      # Check if the selected net is allowed to be flipped
+      set allow_flip 1
+      if {!$allow_multi_bit_upset} {
+        set net_value [examine -radixenumsymbolic $net_to_flip]
+        if {[dict exists $inject_dict $net_to_flip] && [dict get $inject_dict $net_to_flip] == $net_value} {
+          set allow_flip 0
+          if {$verbosity >= 3} {
+            echo "\[Fault Injection\] Tried to flip $net_to_flip, but was already flipped."
+          }
+        }
+      }
       # flip the random net
-      set flip_return [flipbit $net_to_flip]
-      if {[lindex $flip_return 0]} {
-        set success 1
-      } else {
-        if {$::verbosity >= 3} {
-          echo "\[Fault Injection\] Failed to flip $net_to_flip. Choosing another one."
+      if {$allow_flip} {
+        set flip_return [flipbit $net_to_flip]
+        if {[lindex $flip_return 0]} {
+          set success 1
+          if {!$allow_multi_bit_upset} {
+            # save the new value to the dict
+            dict set inject_dict $net_to_flip [examine -radixenumsymbolic $net_to_flip]
+          }
+        } else {
+          if {$::verbosity >= 3} {
+            echo "\[Fault Injection\] Failed to flip $net_to_flip. Choosing another one."
+          }
         }
       }
     }
-    incr stat_num_bitflips
+    if {$success} {
+      incr stat_num_bitflips
 
-    # record the output after the flip
-    set post_flip_out_val [list]
-    foreach net $output_netlist {
-      lappend post_flip_out_val [examine $net]
+      # record the output after the flip
+      set post_flip_out_val [list]
+      foreach net $output_netlist {
+        lappend post_flip_out_val [examine $net]
+      }
+      # record the new state before the flip
+      set post_flip_next_state_val [list]
+      foreach net $next_state_netlist {
+        lappend post_flip_next_state_val [examine $net]
+      }
+      # check if the output changed
+      set output_state "not modified"
+      set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
+      if {$output_changed} {
+        set output_state "changed"
+        incr stat_num_outputs_changed
+      }
+      # check if the new state changed
+      set new_state_state "not modified"
+      set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
+      if {$new_state_changed} {
+        set new_state_state "changed"
+        incr stat_num_state_changed
+      }
+      if {$output_changed || $new_state_changed} {
+        incr stat_num_flip_propagated
+      }
+      # display the result
+      if {$verbosity >= 2} {
+        echo "\[Fault Injection\] Time: [RealToTime $now]. Flipped net $net_to_flip from [lindex $flip_return 1] to [lindex $flip_return 2]. Output signals $output_state. New state $new_state_state."
+      }
+      # Log the result
+      puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
     }
-    # record the new state before the flip
-    set post_flip_next_state_val [list]
-    foreach net $next_state_netlist {
-      lappend post_flip_next_state_val [examine $net]
-    }
-    # check if the output changed
-    set output_state "not modified"
-    set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
-    if {$output_changed} {
-      set output_state "changed"
-      incr stat_num_outputs_changed
-    }
-    # check if the new state changed
-    set new_state_state "not modified"
-    set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
-    if {$new_state_changed} {
-      set new_state_state "changed"
-      incr stat_num_state_changed
-    }
-    if {$output_changed || $new_state_changed} {
-      incr stat_num_flip_propagated
-    }
-    # display the result
-    if {$verbosity >= 2} {
-      echo "\[Fault Injection\] Time: [RealToTime $now]. Flipped net $net_to_flip from [lindex $flip_return 1] to [lindex $flip_return 2]. Output signals $output_state. New state $new_state_state."
-    }
-    # Log the result
-    puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
   }
 }
 
