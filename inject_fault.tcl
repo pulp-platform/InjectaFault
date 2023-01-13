@@ -12,7 +12,7 @@ transcript quietly
 # 1 : Only important initializaion information
 # 2 : Important information and occurences of bitflips (recommended)
 # 3 : All information that is possible
-set ::verbosity 2
+set verbosity 2
 
 # Import Netlist procs
 source ../scripts/fault_injection/extract_nets.tcl
@@ -53,6 +53,12 @@ set inject_combinatorial_logic 0
 # == Allow multiple injections in the same net ==
 set allow_multi_bit_upset 0
 
+# == Check if core outputs were modified by flip ==
+set check_core_output_modification 0
+
+# == Check if next state signals were modified by flip ==
+set check_core_next_state_modification 0
+
 # == Nets that can be flipped ==
 # leave empty {} to generate the netlist according to the settings above
 set force_flip_nets [list]
@@ -62,6 +68,9 @@ set force_flip_nets [list]
 ########################################
 
 set inject_netlist $force_flip_nets
+
+# Length of the common prefix of all injected nets (computed later)
+set inject_netlist_prefix_len 0
 
 # List of combinatorial nets that contain the next state
 set next_state_netlist [list]
@@ -104,6 +113,52 @@ if {[llength $inject_netlist] == 0} {
       set inject_netlist [concat $inject_netlist [get_unprotected_lsu_state_netlist $group $tile $core]]
     }
   }
+}
+
+#######################
+#  Helper Procedures  #
+#######################
+
+proc time_ns {time_ps} {
+  set time_str ""
+  append time_str "[expr $time_ps / 1000]"
+  set remainder [expr $time_ps % 1000]
+  if {$remainder != 0} {
+    append time_str "."
+    if {$remainder < 100} {append time_str "0"}
+    if {$remainder < 10} {append time_str "0"}
+    append time_str "$remainder"
+  }
+  append time_str " ns"
+  return $time_str
+}
+
+proc find_common_prefix_length {netlist} {
+  if {[llength $netlist] <= 1} {return 0}
+  set first_item [lindex $netlist 0]
+  set netname_prefix_length 0
+  set match_all 1
+  while {$match_all} {
+    set next_idx [string first / $first_item [expr $netname_prefix_length + 1]]
+    if {$next_idx == -1} { break }
+    set match_prefix [string range $first_item 0 $next_idx]
+    foreach item $netlist {
+      if {!([string first $match_prefix $item] == 0)} { set match_all 0 }
+    }
+    if {$match_all} {
+      set netname_prefix_length $next_idx
+    }
+  }
+  return $netname_prefix_length
+}
+
+proc net_print_str {net_name} {
+  if {$::inject_netlist_prefix_len == 0} {
+    return $net_name
+  }
+  set print_str "\[...\]"
+  append print_str [string range $net_name $::inject_netlist_prefix_len end]
+  return $print_str
 }
 
 ################
@@ -170,13 +225,26 @@ when { $now == 10ns } {
       set inject_netlist [concat $inject_netlist [get_all_core_nets $group $tile $core]]
     }
   }
+  # print how many nets were found
+  set num_nets [llength $inject_netlist]
+  if {$::verbosity >= 1} {
+    echo "\[Fault Injection\] Selected $num_nets nets for fault injection."
+  }
+  # print all nets that were found
+  if {$::verbosity >= 3} {
+    foreach net $inject_netlist {
+      echo " - [get_net_reg_width $net]-bit [get_net_type $net] : $net"
+    }
+    echo ""
+  }
+  # determine the common prefix
+  set ::inject_netlist_prefix_len [find_common_prefix_length $inject_netlist]
 }
 
 # start fault injection
 when "\$now == $inject_start_time" {
   if {$verbosity >= 1} {
-    echo "\[Fault Injection\] Starting fault injection."
-    echo "\[Fault Injection\] Selected [llength $inject_netlist] nets for fault injection"
+    echo "\[Fault Injection\] $inject_start_time: Starting fault injection."
   }
   foreach assertion $assertion_disable_list {
     assertion enable -off $assertion
@@ -195,13 +263,17 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
 
     # record the output before the flip
     set pre_flip_out_val [list]
-    foreach net $output_netlist {
-      lappend pre_flip_out_val [examine $net]
+    if {$check_core_output_modification} {
+      foreach net $output_netlist {
+        lappend pre_flip_out_val [examine $net]
+      }
     }
     # record the new state before the flip
     set pre_flip_next_state_val [list]
-    foreach net $next_state_netlist {
-      lappend pre_flip_next_state_val [examine $net]
+    if {$check_core_next_state_modification} {
+      foreach net $next_state_netlist {
+        lappend pre_flip_next_state_val [examine $net]
+      }
     }
 
     # Questa currently has a bug that it won't force certain nets. So we retry
@@ -224,7 +296,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
         if {[dict exists $inject_dict $net_to_flip] && [dict get $inject_dict $net_to_flip] == $net_value} {
           set allow_flip 0
           if {$verbosity >= 3} {
-            echo "\[Fault Injection\] Tried to flip $net_to_flip, but was already flipped."
+            echo "\[Fault Injection\] Tried to flip [net_print_str $net_to_flip], but was already flipped."
           }
         }
       }
@@ -239,7 +311,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
           }
         } else {
           if {$::verbosity >= 3} {
-            echo "\[Fault Injection\] Failed to flip $net_to_flip. Choosing another one."
+            echo "\[Fault Injection\] Failed to flip [net_print_str $net_to_flip]. Choosing another one."
           }
         }
       }
@@ -247,39 +319,60 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
     if {$success} {
       incr stat_num_bitflips
 
+      set flip_propagated 0
       # record the output after the flip
       set post_flip_out_val [list]
-      foreach net $output_netlist {
-        lappend post_flip_out_val [examine $net]
+      if {$check_core_output_modification} {
+        foreach net $output_netlist {
+          lappend post_flip_out_val [examine $net]
+        }
+        # check if the output changed
+        set output_state "not modified"
+        set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
+        if {$output_changed} {
+          set output_state "changed"
+          incr stat_num_outputs_changed
+          set flip_propagated 1
+        }
+      } else {
+        set output_changed "x"
       }
       # record the new state before the flip
       set post_flip_next_state_val [list]
-      foreach net $next_state_netlist {
-        lappend post_flip_next_state_val [examine $net]
+      if {$check_core_next_state_modification} {
+        foreach net $next_state_netlist {
+          lappend post_flip_next_state_val [examine $net]
+        }
+        # check if the new state changed
+        set new_state_state "not modified"
+        set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
+        if {$new_state_changed} {
+          set new_state_state "changed"
+          incr stat_num_state_changed
+          set flip_propagated 1
+        }
+      } else {
+        set new_state_changed "x"
       }
-      # check if the output changed
-      set output_state "not modified"
-      set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
-      if {$output_changed} {
-        set output_state "changed"
-        incr stat_num_outputs_changed
-      }
-      # check if the new state changed
-      set new_state_state "not modified"
-      set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
-      if {$new_state_changed} {
-        set new_state_state "changed"
-        incr stat_num_state_changed
-      }
-      if {$output_changed || $new_state_changed} {
+
+      if {$flip_propagated} {
         incr stat_num_flip_propagated
       }
       # display the result
       if {$verbosity >= 2} {
-        echo "\[Fault Injection\] Time: [RealToTime $now]. Flipped net $net_to_flip from [lindex $flip_return 1] to [lindex $flip_return 2]. Output signals $output_state. New state $new_state_state."
+        set print_str "\[Fault Injection\] Time: [time_ns $now]. "
+        append print_str "Flipped net [net_print_str $net_to_flip] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
+        if {$check_core_output_modification} {
+          append print_str "Output signals $output_state. "
+        }
+        if {$check_core_next_state_modification} {
+          append print_str "New state $new_state_state. "
+        }
+        echo $print_str
       }
       # Log the result
       puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
+      flush $injection_log
     }
   }
 }

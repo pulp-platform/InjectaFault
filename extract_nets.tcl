@@ -24,7 +24,9 @@ lappend core_netlist_ignore *gen_stack_overflow_check*
 lappend core_netlist_ignore *dmr*
 lappend core_netlist_ignore *hart_id*
 lappend core_netlist_ignore *clk_i
+lappend core_netlist_ignore *rst_ni
 lappend core_netlist_ignore *rst_i
+lappend core_netlist_ignore *rst
 # registers/memories
 lappend core_netlist_ignore *mem
 lappend core_netlist_ignore *_q
@@ -413,19 +415,6 @@ proc get_all_core_nets {group tile core} {
 
   # recursively extract all nets and enums from arrays and structs
   set core_netlist_extracted [extract_netlists $core_netlist_filtered]
-
-  set num_extracted [llength $core_netlist_extracted]
-  if {$::verbosity >= 1} {
-    echo "\[Fault Injection\] There are $num_extracted nets where faults can be injected in this simulation."
-  }
-
-  # print all nets that were found
-  if {$::verbosity >= 3} {
-    foreach core_net $core_netlist_extracted {
-      echo " - [get_net_reg_width $core_net] bit [get_net_type $core_net] : $core_net"
-    }
-    echo ""
-  }
 
   return $core_netlist_extracted
 }
