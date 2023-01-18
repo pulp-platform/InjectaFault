@@ -204,16 +204,16 @@ proc net_print_str {net_name} {
 
 # flip a spefific bit of the given net name. returns a 1 if the bit could be flipped
 proc flipbit {signal_name} {
-  # check if net is an enum
   set success 0
   set old_value [examine -radixenumsymbolic $signal_name]
+  # check if net is an enum
   if {[examine -radixenumnumeric $signal_name] != [examine -radixenumsymbolic $signal_name]} {
     set old_value_numeric [examine -radix binary,enumnumeric $signal_name]
     set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
     while {$old_value_numeric == $new_value_numeric && [string length $old_value_numeric] != 1} {
       set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
     }
-    force -freeze sim:$signal_name $new_value_numeric -cancel $::fault_duration
+    force -freeze sim:$signal_name $new_value_numeric, $old_value_numeric $::fault_duration -cancel $::fault_duration
     set success 1
   } else {
     set flip_signal_name $signal_name
@@ -224,9 +224,13 @@ proc flipbit {signal_name} {
       set flip_index [expr int(rand()*$len)]
       set flip_signal_name $signal_name\($flip_index\)
     }
+    set old_bit_value "0"
     set new_bit_value "1"
-    if {[string index $bin_val [expr $len - 1 - $flip_index]] == "1"} {set new_bit_value "0"}
-    force -freeze sim:$flip_signal_name $new_bit_value -cancel $::fault_duration
+    if {[string index $bin_val [expr $len - 1 - $flip_index]] == "1"} {
+      set new_bit_value "0"
+      set old_bit_value "1"
+    }
+    force -freeze sim:$flip_signal_name $new_bit_value, $old_bit_value $::fault_duration -cancel $::fault_duration
     if {[examine -radix binary $signal_name] != $bin_val} {set success 1}
   }
   set new_value [examine -radixenumsymbolic $signal_name]
