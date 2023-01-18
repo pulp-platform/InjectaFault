@@ -69,8 +69,8 @@ set force_flip_nets [list]
 
 set inject_netlist $force_flip_nets
 
-# Length of the common prefix of all injected nets (computed later)
-set inject_netlist_prefix_len 0
+# Common path sections of all nets where errors can be injected (computed later)
+set netlist_common_path_sections [list]
 
 # List of combinatorial nets that contain the next state
 set next_state_netlist [list]
@@ -133,31 +133,68 @@ proc time_ns {time_ps} {
   return $time_str
 }
 
-proc find_common_prefix_length {netlist} {
-  if {[llength $netlist] <= 1} {return 0}
-  set first_item [lindex $netlist 0]
-  set netname_prefix_length 0
-  set match_all 1
-  while {$match_all} {
-    set next_idx [string first / $first_item [expr $netname_prefix_length + 1]]
-    if {$next_idx == -1} { break }
-    set match_prefix [string range $first_item 0 $next_idx]
-    foreach item $netlist {
-      if {!([string first $match_prefix $item] == 0)} { set match_all 0 }
-    }
-    if {$match_all} {
-      set netname_prefix_length $next_idx
+proc find_common_path_sections {netlist} {
+  # Safety check if the list has any elements
+  if {[llength $netlist] == 0} {
+    return [list]
+  }
+  # Extract the first net as reference
+  set first_net [lindex $netlist 0]
+  set first_net_sections [split $first_net "/"]
+  # Determine the minimal number of sections in the netlist
+  set min_num_sections 9999
+  foreach net $netlist {
+    set cur_path_sections [split $net "/"]
+    set num_sections [llength $cur_path_sections]
+    if {$num_sections < $min_num_sections} {set min_num_sections $num_sections}
+  }
+  # Create a match list
+  set match_list [list]
+  for {set i 0} {$i < $min_num_sections} {incr i} {lappend match_list 1}
+  # Test for every net which sections in its path matches the first net path
+  foreach net $netlist {
+    set cur_path_sections [split $net "/"]
+    # Test every section
+    for {set i 0} {$i < $min_num_sections} {incr i} {
+      # prevent redundant checking for speedup
+      if {[lindex $match_list $i] != 0} {
+        # check if the sections matches the first net section
+        if {[lindex $first_net_sections $i] != [lindex $cur_path_sections $i]} {
+          lset match_list $i 0
+        }
+      }
     }
   }
-  return $netname_prefix_length
+  return $match_list
 }
 
 proc net_print_str {net_name} {
-  if {$::inject_netlist_prefix_len == 0} {
+  # Check if the list exists
+  if {[llength $::netlist_common_path_sections] == 0} {
     return $net_name
   }
-  set print_str "\[...\]"
-  append print_str [string range $net_name $::inject_netlist_prefix_len end]
+  # Split the netname path
+  set cur_path_sections [split $net_name "/"]
+  set print_str ""
+  set printed_dots 0
+  # check sections individually
+  for {set i 0} {$i < [llength $cur_path_sections]} {incr i} {
+    # check if the section at the current index is a common to all paths
+    if {$i < [llength $::netlist_common_path_sections] && [lindex $::netlist_common_path_sections $i] == 1} {
+      # Do not print the dots if multiple sections match in sequence
+      if {!$printed_dots} {
+        # Print dots to indicate the path was shortened
+        append print_str "\[...\]"
+        if {$i != [llength $cur_path_sections] - 1} {append print_str "/"}
+        set printed_dots 1
+      }
+    } else {
+      # Sections don't match, print the path section
+      append print_str "[lindex $cur_path_sections $i]"
+      if {$i != [llength $cur_path_sections] - 1} {append print_str "/"}
+      set printed_dots 0
+    }
+  }
   return $print_str
 }
 
@@ -237,14 +274,14 @@ when { $now == 10ns } {
     }
     echo ""
   }
-  # determine the common prefix
-  set ::inject_netlist_prefix_len [find_common_prefix_length $inject_netlist]
+  # determine the common sections
+  set ::netlist_common_path_sections [find_common_path_sections $inject_netlist]
 }
 
 # start fault injection
 when "\$now == $inject_start_time" {
   if {$verbosity >= 1} {
-    echo "\[Fault Injection\] $inject_start_time: Starting fault injection."
+    echo "$inject_start_time: \[Fault Injection\] Starting fault injection."
   }
   foreach assertion $assertion_disable_list {
     assertion enable -off $assertion
@@ -296,7 +333,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
         if {[dict exists $inject_dict $net_to_flip] && [dict get $inject_dict $net_to_flip] == $net_value} {
           set allow_flip 0
           if {$verbosity >= 3} {
-            echo "\[Fault Injection\] Tried to flip [net_print_str $net_to_flip], but was already flipped."
+            echo "[time_ns $now]: \[Fault Injection\] Tried to flip [net_print_str $net_to_flip], but was already flipped."
           }
         }
       }
@@ -311,7 +348,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
           }
         } else {
           if {$::verbosity >= 3} {
-            echo "\[Fault Injection\] Failed to flip [net_print_str $net_to_flip]. Choosing another one."
+            echo "[time_ns $now]: \[Fault Injection\] Failed to flip [net_print_str $net_to_flip]. Choosing another one."
           }
         }
       }
@@ -360,7 +397,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
       }
       # display the result
       if {$verbosity >= 2} {
-        set print_str "\[Fault Injection\] Time: [time_ns $now]. "
+        set print_str "[time_ns $now]: \[Fault Injection\] "
         append print_str "Flipped net [net_print_str $net_to_flip] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
         if {$check_core_output_modification} {
           append print_str "Output signals $output_state. "

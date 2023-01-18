@@ -15,8 +15,6 @@ proc base_path {group tile core} {return "/mempool_tb/dut/i_mempool_cluster/gen_
 set is_dmr_enabled [examine -radix dec /snitch_dmr_pkg::DualModularRedundancy]
 set is_ecc_enabled [examine -radix binary [base_path 0 0 0]/EnableECCReg]
 
-set snitch_regfile_mem_net_read_bypass 1
-
 # == Nets to ignore for transient bit flips ==
 # nets used for debugging
 lappend core_netlist_ignore *gen_stack_overflow_check*
@@ -168,37 +166,19 @@ proc get_protected_regfile_mem_netlist {group tile core} {
   if {$core % 2 == 0} {
     # Protected Master
     if {$::is_dmr_enabled} {
-      if {$::snitch_regfile_mem_net_read_bypass} {
-        for {set i 0} {$i < 3} {incr i} {
-          lappend netlist $base/gen_dmr_master_regfile/i_snitch_regfile/rdata_ecc\[$i\]
-        }
-      } else {
-        for {set i 0} {$i < 32} {incr i} {
-          lappend netlist $base/gen_dmr_master_regfile/i_snitch_regfile/mem\[$i\]
-        }
+      for {set i 0} {$i < 32} {incr i} {
+        lappend netlist $base/gen_dmr_master_regfile/i_snitch_regfile/mem\[$i\]
       }
     } elseif {$::is_ecc_enabled} {
-      if {$::snitch_regfile_mem_net_read_bypass} {
-        for {set i 0} {$i < 3} {incr i} {
-          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/rdata_ecc\[$i\]
-        }
-      } else {
-        for {set i 0} {$i < 32} {incr i} {
-          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
-        }
+      for {set i 0} {$i < 32} {incr i} {
+        lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
       }
     }
   } else {
     # Protected Slave
     if {$::is_ecc_enabled} {
-      if {$::snitch_regfile_mem_net_read_bypass} {
-        for {set i 0} {$i < 3} {incr i} {
-          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/rdata_ecc\[$i\]
-        }
-      } else {
-        for {set i 0} {$i < 32} {incr i} {
-          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
-        }
+      for {set i 0} {$i < 32} {incr i} {
+        lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
       }
     }
   }
@@ -210,15 +190,10 @@ proc get_unprotected_regfile_mem_netlist {group tile core} {
   set netlist [list]
   if {$::is_ecc_enabled || ($core % 2 == 0 && $::is_dmr_enabled)}{return $netlist}
 
-  if {$::snitch_regfile_mem_net_read_bypass} {
-    for {set i 0} {$i < 3} {incr i} {
-      lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/rdata_o\[$i\]
-    }
-  } else {
-    for {set i 0} {$i < 32} {incr i} {
-      lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
-    }
+  for {set i 0} {$i < 32} {incr i} {
+    lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
   }
+  
   return $netlist
 }
 
