@@ -4,116 +4,110 @@
 #
 # Author: Luca Rufer (lrufer@student.ethz.ch)
 
-# Disable transcript
-transcript quietly
+# ============ List of variables that may be passed to this script ============
+# ----------------------------------- General ---------------------------------
+# 'verbosity'         : Controls the amount of information printed during script
+#                       execution. Possible values are:
+#                       0 : No statements at all
+#                       1 : Only important initializaion information
+#                       2 : Important information and occurences of bitflips
+#                           (Recommended). Default
+#                       3 : All information that is possible
+# 'log_injections'    : Create a logfile of all injected faults, including
+#                       timestamps, the absolute path of the flipped net, the
+#                       value before the flip, the value after the flip and
+#                       more.
+#                       The logfile is named "fault_injection_<time_stamp>.log".
+#                       0 : Disable logging (Default)
+#                       1 : Enable logging
+# 'seed'              : Set the seed for the number generator. Default: 12345
+# ------------------------------- Timing settings -----------------------------
+# 'inject_start_time' : Earliest time of the first fault injection.
+# 'inject_stop_time'  : Latest possible time for a fault injection.
+#                       Set to 0 for no stop.
+# 'injection_clock'   : Absolute path to the net that is used as an injected
+#                       trigger and clock. Can be a special trigger clock in
+#                       the testbench, or the normal system clock.
+# 'injection_clock_trigger' : Signal value of 'injection_clock' that triggers
+#                       the fault injection. If a normal clock of a rising edge
+#                       triggered circuit is used as injection clock, it is
+#                       recommended to set the trigger to '0', so injected
+#                       flips can clearly be distinguished in the waveforms.
+# 'fault_period'      : Period of the fault injection in clock cycles of the
+#                      injection clock. Set to 0 for only a single flip.
+# 'fault_duration'    : Duration of injected faults.
+# -------------------------------- Flip settings ------------------------------
+# 'allow_multi_bit_upset' : Allow injecting another error in a net that was
+#                       already flipped and not driven to another value yet.
+#                       0 : Disable multi bit upsets
+#                       1 : Enable multi bit upsets
+# 'check_core_output_modification' : Check if an injected fault changes the
+#                       output of the circuit under test. All nets in
+#                       'output_netlist' are checked. The result of the check
+#                       is printed after every flip (if verbosity high enough),
+#                       and logged to the logfile.
+#                       0 : Disable output modification checks. The check will
+#                           be logged as 'x'.
+#                       1 : Enable output modification checks.
+# 'check_core_next_state_modification' : Check if an injected fault changes the
+#                       next state of the circuit under test. All nets in
+#                       'next_state_netlist' are checked. The result of the
+#                       check is printed after every flip (if verbosity high
+#                       enough), and logged to the logfile.
+#                       0 : Disable next state modification checks. The check
+#                           will be logged as 'x'.
+#                       1 : Enable next state modification checks.
+# ---------------------------------- Netlists ---------------------------------
+# 'inject_netlist'    : List of absolute net or register paths to be flipped
+#                       in the simulation. If the inject netlist is changed
+#                       after this script was first called, the proc
+#                       'updated_inject_netlist' must be called.
+# 'output_netlist'    : List of absolute net or register paths to be used for
+#                       the output modification check.
+# 'next_state_netlist' : List of absolute net or register paths to be used for
+#                       the next state modification check.
+# 'assertion_disable_list' : List of absolute paths to named assertions that
+#                       need to be disabled for during fault injecton.
+#                       Assertions are enabled again after the simulation stop
+#                       time.
 
-# == Verbosity if the fault injection script ==
-# 0 : No statements at all
-# 1 : Only important initializaion information
-# 2 : Important information and occurences of bitflips (recommended)
-# 3 : All information that is possible
-set verbosity 2
+##################################
+#  Set default parameter values  #
+##################################
 
-# Import Netlist procs
+# General
+if {![info exists verbosity]}      { set verbosity          2 }
+if {![info exists log_injections]} { set log_injections     0 }
+if {![info exists seed]}           { set seed           12345 }
+# Timing settings
+if {![info exists inject_start_time]}       { set inject_start_time 100ns   }
+if {![info exists inject_stop_time]}        { set inject_stop_time    0     }
+if {![info exists injection_clock]}         { set injection_clock   "clk"   }
+if {![info exists injection_clock_trigger]} { set injection_clock_trigger 0 }
+if {![info exists fault_period]}            { set fault_period        0     }
+if {![info exists fault_duration]}          { set fault_duration      1ns   }
+# Flip settings
+if {![info exists allow_multi_bit_upset]}              { set allow_multi_bit_upset              0 }
+if {![info exists check_core_output_modification]}     { set check_core_output_modification     0 }
+if {![info exists check_core_next_state_modification]} { set check_core_next_state_modification 0 }
+# Netlists
+if {![info exists inject_netlist]}         { set inject_netlist         [list] }
+if {![info exists output_netlist]}         { set output_netlist         [list] }
+if {![info exists next_state_netlist]}     { set next_state_netlist     [list] }
+if {![info exists assertion_disable_list]} { set assertion_disable_list [list] }
+
+# Source generic netlist extraction procs
 source ../scripts/fault_injection/extract_nets.tcl
-
-###################
-#  Test Settings  #
-###################
-
-# == random seed ==
-expr srand(12345)
-
-# == Time of first fault injection
-# Note: Faults will be injected on falling clock edges to make the flipped
-#       Signals (and their consequences) easier to see in the simulator
-set inject_start_time 2500ns
-
-# == Period of Faults (in clk cycles, 0 for no repeat) ==
-set fault_period 10
-
-# == Time to force-stop simulation (set to 0 for no stop) ==
-set inject_stop_time 0
-
-# == Duration of the fault ==
-set fault_duration 0.5ns
-
-# == Cores where faults will be injected ==
-set target_cores {{0 0 0} {0 0 1}}
-
-# == Select where to inject faults
-set inject_protected_states 0
-set inject_unprotected_states 0
-set inject_protected_regfile 0
-set inject_unprotected_regfile 0
-set inject_protected_lsu 1
-set inject_unprotected_lsu 0
-set inject_combinatorial_logic 0
-
-# == Allow multiple injections in the same net ==
-set allow_multi_bit_upset 0
-
-# == Check if core outputs were modified by flip ==
-set check_core_output_modification 0
-
-# == Check if next state signals were modified by flip ==
-set check_core_next_state_modification 0
-
-# == Nets that can be flipped ==
-# leave empty {} to generate the netlist according to the settings above
-set force_flip_nets [list]
 
 ########################################
 #  Finish setup depending on settings  #
 ########################################
 
-set inject_netlist $force_flip_nets
+# Set the seed
+expr srand($seed)
 
-# Common path sections of all nets where errors can be injected (computed later)
+# Common path sections of all nets where errors can be injected
 set netlist_common_path_sections [list]
-
-# List of combinatorial nets that contain the next state
-set next_state_netlist [list]
-
-# List of output nets
-set output_netlist [list]
-
-# == Assertions to be disabled to prevent simulation failures ==
-# Note: Assertions will only be diabled between the inject start and stop time.
-set assertion_disable_list [list]
-
-# Add all targeted cores
-foreach target $target_cores {
-  foreach {group tile core} $target {}
-  set next_state_netlist [concat $next_state_netlist [get_next_state_netlist $group $tile $core]]
-  set output_netlist [concat $output_netlist [get_output_netlist $group $tile $core]]
-  set assertion_disable_list [concat $assertion_disable_list [get_assertions $group $tile $core]]
-}
-
-# check net list selection is forced
-if {[llength $inject_netlist] == 0} {
-  foreach target $target_cores {
-    foreach {group tile core} $target {}
-    if {$inject_protected_states} {
-      set inject_netlist [concat $inject_netlist [get_protected_state_netlist $group $tile $core]]
-    }
-    if {$inject_unprotected_states} {
-      set inject_netlist [concat $inject_netlist [get_unprotected_state_netlist $group $tile $core]]
-    }
-    if {$inject_protected_regfile} {
-      set inject_netlist [concat $inject_netlist [get_protected_regfile_mem_netlist $group $tile $core]]
-    }
-    if {$inject_unprotected_regfile} {
-      set inject_netlist [concat $inject_netlist [get_unprotected_regfile_mem_netlist $group $tile $core]]
-    }
-    if {$inject_protected_lsu} {
-      set inject_netlist [concat $inject_netlist [get_protected_lsu_state_netlist $group $tile $core]]
-    }
-    if {$inject_unprotected_lsu} {
-      set inject_netlist [concat $inject_netlist [get_unprotected_lsu_state_netlist $group $tile $core]]
-    }
-  }
-}
 
 #######################
 #  Helper Procedures  #
@@ -198,6 +192,32 @@ proc net_print_str {net_name} {
   return $print_str
 }
 
+proc updated_inject_netlist {} {
+  # print how many nets were found
+  set num_nets [llength $::inject_netlist]
+  if {$::verbosity >= 1} {
+    echo "\[Fault Injection\] Selected $num_nets nets for fault injection."
+  }
+  # print all nets that were found
+  if {$::verbosity >= 3} {
+    foreach net $::inject_netlist {
+      echo " - [get_net_reg_width $net]-bit [get_net_type $net] : $net"
+    }
+    echo ""
+  }
+  # determine the common sections
+  set ::netlist_common_path_sections [find_common_path_sections $::inject_netlist]
+}
+
+##########################
+#  Random Net Selection  #
+##########################
+
+proc select_random_net { netlist } {
+  set idx [expr int(rand()*[llength $netlist])]
+  return [lindex $netlist $idx]
+}
+
 ################
 #  Flip a Bit  #
 ################
@@ -254,33 +274,14 @@ if {$verbosity >= 1} {
 }
 
 # Open the log file
-set time_stamp [exec date +%Y%m%d_%H%M%S]
-set injection_log [open "fault_injection_$time_stamp.log" w+]
-puts $injection_log "timestamp,netname,pre_flip_value,post_flip_value,output_changed,new_state_changed"
-
-# After the simulation start, get all the nets of the core
-when { $now == 10ns } {
-  if {$inject_combinatorial_logic} {
-    foreach target $target_cores {
-      foreach {group tile core} $target {}
-      set inject_netlist [concat $inject_netlist [get_all_core_nets $group $tile $core]]
-    }
-  }
-  # print how many nets were found
-  set num_nets [llength $inject_netlist]
-  if {$::verbosity >= 1} {
-    echo "\[Fault Injection\] Selected $num_nets nets for fault injection."
-  }
-  # print all nets that were found
-  if {$::verbosity >= 3} {
-    foreach net $inject_netlist {
-      echo " - [get_net_reg_width $net]-bit [get_net_type $net] : $net"
-    }
-    echo ""
-  }
-  # determine the common sections
-  set ::netlist_common_path_sections [find_common_path_sections $inject_netlist]
+if {$log_injections} {
+  set time_stamp [exec date +%Y%m%d_%H%M%S]
+  set injection_log [open "fault_injection_$time_stamp.log" w+]
+  puts $injection_log "timestamp,netname,pre_flip_value,post_flip_value,output_changed,new_state_changed"
 }
+
+# Update the inject netlist
+updated_inject_netlist
 
 # start fault injection
 when "\$now == $inject_start_time" {
@@ -297,7 +298,7 @@ set inject_dict [dict create]
 
 # periodically inject faults
 set prescaler [expr $fault_period - 1]
-when "\$now >= $inject_start_time and clk == \"1'h0\"" {
+when "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigger" {
   incr prescaler
   if {$prescaler == $fault_period && [llength $inject_netlist] != 0} {
     set prescaler 0
@@ -327,8 +328,7 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
     set attempts 0
     while {!$success && [incr attempts] < 50} {
       # get a random net
-      set idx [expr int(rand()*[llength $inject_netlist])]
-      set net_to_flip [lindex $inject_netlist $idx]
+      set net_to_flip [select_random_net $inject_netlist]
 
       # Check if the selected net is allowed to be flipped
       set allow_flip 1
@@ -412,8 +412,10 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
         echo $print_str
       }
       # Log the result
-      puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
-      flush $injection_log
+      if {$log_injections} {
+        puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
+        flush $injection_log
+      }
     }
   }
 }
@@ -421,8 +423,6 @@ when "\$now >= $inject_start_time and clk == \"1'h0\"" {
 # stop the simulation and output statistics
 when "\$now >= $inject_stop_time" {
   if { $inject_stop_time != 0 } {
-    # Stop the simulation
-    stop
     # Enable Assertions again
     foreach assertion $assertion_disable_list {
       assertion enable -on $assertion
@@ -437,6 +437,8 @@ when "\$now >= $inject_stop_time" {
       echo ""
     }
     # Close the logfile
-    close $injection_log
+    if {$log_injections} {
+      close $injection_log
+    }
   }
 }
