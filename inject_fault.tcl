@@ -5,6 +5,9 @@
 # Author: Luca Rufer (lrufer@student.ethz.ch)
 
 # ============ List of variables that may be passed to this script ============
+# Any of these variables may not be changed while the fault injection script
+# is running, unless noted otherwise. Changing any of the settings during
+# runtime may result in undefined behaviour.
 # ----------------------------------- General ---------------------------------
 # 'verbosity'         : Controls the amount of information printed during script
 #                       execution. Possible values are:
@@ -34,13 +37,40 @@
 #                       recommended to set the trigger to '0', so injected
 #                       flips can clearly be distinguished in the waveforms.
 # 'fault_period'      : Period of the fault injection in clock cycles of the
-#                      injection clock. Set to 0 for only a single flip.
-# 'fault_duration'    : Duration of injected faults.
+#                       injection clock. Set to 0 for only a single flip.
+# 'rand_initial_injection_phase' : Set the phase relative to the 'fault_period'
+#                       to a random initial value between 0 (inclusive) and
+#                       'fault_period' (exclusive). If multiple simulation
+#                       with different seeds are performed, this option allows
+#                       the injected faults to be evenly distributed accross
+#                       the 'injection_clock' cycles.
+#                       0 : Disable random phase. The first fault injection
+#                           is performed at the first injeciton clock trigger
+#                           after the 'inject_start_time'. Default.
+#                       1 : Enable random phase.
+# 'max_num_fault_inject' : Maximum number of faults to be injected. The number
+#                       of faults injected may be lower than this if the
+#                       simualtion finishes before, or if the 'inject_stop_time'
+#                       is reached. If 'max_num_fault_inject' is set to 0, this
+#                       setting is ignored (default).
+# 'signal_fault_duration' : Duration of faults injected into combinatorial
+#                       signals, before the original value is restored.
+# 'register_fault_duration' : Minumum duration of faults injected into
+#                       registers. Faults injected into registers are not
+#                       restored after the 'register_fault_duration' and will
+#                       persist until overwritten by the circuit under test.
 # -------------------------------- Flip settings ------------------------------
-# 'allow_multi_bit_upset' : Allow injecting another error in a net that was
+# 'allow_multi_bit_upset' : Allow injecting another error in a Register that was
 #                       already flipped and not driven to another value yet.
-#                       0 : Disable multi bit upsets
+#                       0 : Disable multi bit upsets (default)
 #                       1 : Enable multi bit upsets
+# 'use_bitwidth_as_weight' : Use the bit width of a net as a weight for the
+#                       random fault injection net selection. If this option
+#                       is enabled, a N-bit net has an N times higher chance
+#                       than a 1-bit net of being selected for fault injection.
+#                       0 : Disable using the bitwidth as weight and give every
+#                           net the same chance of being picked (Default).
+#                       1 : Enable using the bit width of nets as weights.
 # 'check_core_output_modification' : Check if an injected fault changes the
 #                       output of the circuit under test. All nets in
 #                       'output_netlist' are checked. The result of the check
@@ -57,11 +87,31 @@
 #                       0 : Disable next state modification checks. The check
 #                           will be logged as 'x'.
 #                       1 : Enable next state modification checks.
+# 'reg_to_sig_ratio'  : Ratio of Registers to combinatorial signals to be
+#                       selected for a fault injection. Example: A value of 4
+#                       selects a ratio of 4:1, giving an 80% for a Register to
+#                       be selected, and a 20% change of a combinatorial signal
+#                       to be selected. If the provided
+#                       'inject_register_netlist' is empty, or the
+#                       'inject_signals_netlist' is empty, this parameter is
+#                       ignored and nets are only selected from the non-empty
+#                       netlist.
+#                       Default value is 1, so the default ratio is 1:1.
 # ---------------------------------- Netlists ---------------------------------
-# 'inject_netlist'    : List of absolute net or register paths to be flipped
-#                       in the simulation. If the inject netlist is changed
-#                       after this script was first called, the proc
+# 'inject_register_netlist' : List of absolute paths to Registers to be flipped
+#                       in the simulation. This is used to simulate Single
+#                       Event Upsets (SEUs). Flips injected in registers are not
+#                       removed by the injection script. If the inject netlist
+#                       is changed after this script was first called, the proc
 #                       'updated_inject_netlist' must be called.
+# 'inject_signals_netlist' : List of absolute paths to combinatorial signals to
+#                       be flipped in the simulation. This is used to simulate
+#                       Single Event Transients (SETs). A fault injection
+#                       drives the target signal for a 'fault_duration', and
+#                       afterwards returns the signal to its original state.
+#                       If the inject netlist is changed after this script was
+#                       first called, the proc 'updated_inject_netlist' must be
+#                       called.
 # 'output_netlist'    : List of absolute net or register paths to be used for
 #                       the output modification check.
 # 'next_state_netlist' : List of absolute net or register paths to be used for
@@ -80,21 +130,27 @@ if {![info exists verbosity]}      { set verbosity          2 }
 if {![info exists log_injections]} { set log_injections     0 }
 if {![info exists seed]}           { set seed           12345 }
 # Timing settings
-if {![info exists inject_start_time]}       { set inject_start_time 100ns   }
-if {![info exists inject_stop_time]}        { set inject_stop_time    0     }
-if {![info exists injection_clock]}         { set injection_clock   "clk"   }
-if {![info exists injection_clock_trigger]} { set injection_clock_trigger 0 }
-if {![info exists fault_period]}            { set fault_period        0     }
-if {![info exists fault_duration]}          { set fault_duration      1ns   }
+if {![info exists inject_start_time]}            { set inject_start_time          100ns }
+if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
+if {![info exists injection_clock]}              { set injection_clock          "clk"   }
+if {![info exists injection_clock_trigger]}      { set injection_clock_trigger      0   }
+if {![info exists fault_period]}                 { set fault_period                 0   }
+if {![info exists rand_initial_injection_phase]} { set rand_initial_injection_phase 0   }
+if {![info exists max_num_fault_inject]}         { set max_num_fault_inject         0   }
+if {![info exists signal_fault_duration]}        { set signal_fault_duration        1ns }
+if {![info exists register_fault_duration]}      { set register_fault_duration      0ns }
 # Flip settings
 if {![info exists allow_multi_bit_upset]}              { set allow_multi_bit_upset              0 }
 if {![info exists check_core_output_modification]}     { set check_core_output_modification     0 }
 if {![info exists check_core_next_state_modification]} { set check_core_next_state_modification 0 }
+if {![info exists reg_to_sig_ratio]}                   { set reg_to_sig_ratio                   1 }
+if {![info exists use_bitwidth_as_weight]}             { set use_bitwidth_as_weight             0 }
 # Netlists
-if {![info exists inject_netlist]}         { set inject_netlist         [list] }
-if {![info exists output_netlist]}         { set output_netlist         [list] }
-if {![info exists next_state_netlist]}     { set next_state_netlist     [list] }
-if {![info exists assertion_disable_list]} { set assertion_disable_list [list] }
+if {![info exists inject_register_netlist]} { set inject_register_netlist [list] }
+if {![info exists inject_signals_netlist]}  { set inject_signals_netlist  [list] }
+if {![info exists output_netlist]}          { set output_netlist          [list] }
+if {![info exists next_state_netlist]}      { set next_state_netlist      [list] }
+if {![info exists assertion_disable_list]}  { set assertion_disable_list  [list] }
 
 # Source generic netlist extraction procs
 source ../scripts/fault_injection/extract_nets.tcl
@@ -192,30 +248,100 @@ proc net_print_str {net_name} {
   return $print_str
 }
 
+proc calculate_weight_by_width {netlist} {
+  set total_weight 0
+  set group_weight_dict [dict create]
+  set group_net_dict [dict create]
+  foreach net $netlist {
+    # determine the width of a net (used as weight)
+    set width [get_net_reg_width $net]
+    if {![dict exists $group_weight_dict $width]} {
+      # New width discovered, add new entry
+      dict set group_weight_dict $width $width
+      dict set group_net_dict $width [list $net]
+    } else {
+      dict incr group_weight_dict $width $width
+      dict lappend group_net_dict $width $net
+    }
+  }
+  # Sum weights of all groups
+  foreach group_weight [dict values $group_weight_dict] {
+    set total_weight [expr $total_weight + $group_weight]
+  }
+  return [list $total_weight $group_weight_dict $group_net_dict]
+}
+
 proc updated_inject_netlist {} {
   # print how many nets were found
-  set num_nets [llength $::inject_netlist]
+  set num_reg_nets [llength $::inject_register_netlist]
+  set num_comb_nets [llength $::inject_signals_netlist]
   if {$::verbosity >= 1} {
-    echo "\[Fault Injection\] Selected $num_nets nets for fault injection."
+    echo "\[Fault Injection\] Selected $num_reg_nets Registers for fault injection."
+    echo "\[Fault Injection\] Selected $num_comb_nets combinatorial Signals for fault injection."
   }
   # print all nets that were found
   if {$::verbosity >= 3} {
-    foreach net $::inject_netlist {
+    echo "Registers: "
+    foreach net $::inject_register_netlist {
+      echo " - [get_net_reg_width $net]-bit [get_net_type $net] : $net"
+    }
+    echo "Combinatorial Signals: "
+    foreach net $::inject_signals_netlist {
       echo " - [get_net_reg_width $net]-bit [get_net_type $net] : $net"
     }
     echo ""
   }
   # determine the common sections
-  set ::netlist_common_path_sections [find_common_path_sections $::inject_netlist]
+  set combined_inject_netlist [concat $::inject_register_netlist $::inject_signals_netlist]
+  set ::netlist_common_path_sections [find_common_path_sections $combined_inject_netlist]
+  # determine the distribution of the nets
+  if {$::use_bitwidth_as_weight} {
+    set ::inject_register_distibrution_info [calculate_weight_by_width $::inject_register_netlist]
+    set ::inject_signals_distibrution_info  [calculate_weight_by_width $::inject_signals_netlist]
+  }
 }
 
 ##########################
 #  Random Net Selection  #
 ##########################
 
-proc select_random_net { netlist } {
-  set idx [expr int(rand()*[llength $netlist])]
-  return [lindex $netlist $idx]
+proc select_random_net {} {
+  # Choose between Register and Signal
+  if {[llength $::inject_register_netlist] != 0 && \
+     ([llength $::inject_signals_netlist] == 0 || \
+      rand() * ($::reg_to_sig_ratio + 1) >= 1)} {
+    set is_register 1
+    set selected_list $::inject_register_netlist
+  } else {
+    set is_register 0
+    set selected_list $::inject_signals_netlist
+  }
+  # Select the distribution
+  if {$::use_bitwidth_as_weight} {
+    # select the distribution
+    if {$is_register} {
+      set distibrution_info $::inject_register_distibrution_info
+    } else {
+      set distibrution_info $::inject_signals_distibrution_info
+    }
+    # unpack the distribution
+    set distribution_total_weight [lindex $distibrution_info 0]
+    set distribution_weight_dict  [lindex $distibrution_info 1]
+    set distribution_net_dict     [lindex $distibrution_info 2]
+    # determine the group
+    set selec [expr rand() * $distribution_total_weight]
+    dict for {group group_weight} $distribution_weight_dict {
+      if {$group_weight <= $selec} {
+        break
+      } else {
+        set selec [expr $selec - $group_weight]
+      }
+    }
+    set selected_list [dict get $distribution_net_dict $group]
+  }
+  set idx [expr int(rand()*[llength $selected_list])]
+  set selected_net [lindex $selected_list $idx]
+  return [list $selected_net $is_register]
 }
 
 ################
@@ -223,7 +349,7 @@ proc select_random_net { netlist } {
 ################
 
 # flip a spefific bit of the given net name. returns a 1 if the bit could be flipped
-proc flipbit {signal_name} {
+proc flipbit {signal_name is_register} {
   set success 0
   set old_value [examine -radixenumsymbolic $signal_name]
   # check if net is an enum
@@ -233,7 +359,11 @@ proc flipbit {signal_name} {
     while {$old_value_numeric == $new_value_numeric && [string length $old_value_numeric] != 1} {
       set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
     }
-    force -freeze sim:$signal_name $new_value_numeric, $old_value_numeric $::fault_duration -cancel $::fault_duration
+    if {$is_register} {
+      force -freeze $signal_name $new_value_numeric -cancel $::register_fault_duration
+    } else {
+      force -freeze $signal_name $new_value_numeric, $old_value_numeric $::signal_fault_duration -cancel $::signal_fault_duration
+    }
     set success 1
   } else {
     set flip_signal_name $signal_name
@@ -250,7 +380,11 @@ proc flipbit {signal_name} {
       set new_bit_value "0"
       set old_bit_value "1"
     }
-    force -freeze sim:$flip_signal_name $new_bit_value, $old_bit_value $::fault_duration -cancel $::fault_duration
+    if {$is_register} {
+      force -freeze $flip_signal_name $new_bit_value -cancel $::register_fault_duration
+    } else {
+      force -freeze $flip_signal_name $new_bit_value, $old_bit_value $::signal_fault_duration -cancel $::signal_fault_duration
+    }
     if {[examine -radix binary $signal_name] != $bin_val} {set success 1}
   }
   set new_value [examine -radixenumsymbolic $signal_name]
@@ -284,7 +418,7 @@ if {$log_injections} {
 updated_inject_netlist
 
 # start fault injection
-when "\$now == $inject_start_time" {
+when -label inject_start "\$now == $inject_start_time" {
   if {$verbosity >= 1} {
     echo "$inject_start_time: \[Fault Injection\] Starting fault injection."
   }
@@ -296,11 +430,21 @@ when "\$now == $inject_start_time" {
 # Dictionary to keep track of injections
 set inject_dict [dict create]
 
+# determine the phase for the initial fault injection
+if {$rand_initial_injection_phase} {
+  set prescaler [expr int(rand() * $fault_period)]
+} else {
+  set prescaler [expr $fault_period - 1]
+}
+
 # periodically inject faults
-set prescaler [expr $fault_period - 1]
-when "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigger" {
+when -label inject_fault "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigger" {
   incr prescaler
-  if {$prescaler == $fault_period && [llength $inject_netlist] != 0} {
+  if {$prescaler == $fault_period && \
+      ([llength $inject_register_netlist] != 0 || \
+       [llength $inject_signals_netlist] != 0) && \
+      ($max_num_fault_inject == 0 || \
+      $stat_num_bitflips < $max_num_fault_inject)} {
     set prescaler 0
 
     # record the output before the flip
@@ -328,11 +472,12 @@ when "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigg
     set attempts 0
     while {!$success && [incr attempts] < 50} {
       # get a random net
-      set net_to_flip [select_random_net $inject_netlist]
-
+      set net_selc_info [select_random_net]
+      set net_to_flip [lindex $net_selc_info 0]
+      set is_register [lindex $net_selc_info 1]
       # Check if the selected net is allowed to be flipped
       set allow_flip 1
-      if {!$allow_multi_bit_upset} {
+      if {$is_register && !$allow_multi_bit_upset} {
         set net_value [examine -radixenumsymbolic $net_to_flip]
         if {[dict exists $inject_dict $net_to_flip] && [dict get $inject_dict $net_to_flip] == $net_value} {
           set allow_flip 0
@@ -343,10 +488,10 @@ when "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigg
       }
       # flip the random net
       if {$allow_flip} {
-        set flip_return [flipbit $net_to_flip]
+        set flip_return [flipbit $net_to_flip $is_register]
         if {[lindex $flip_return 0]} {
           set success 1
-          if {!$allow_multi_bit_upset} {
+          if {$is_register && !$allow_multi_bit_upset} {
             # save the new value to the dict
             dict set inject_dict $net_to_flip [examine -radixenumsymbolic $net_to_flip]
           }
@@ -421,7 +566,7 @@ when "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigg
 }
 
 # stop the simulation and output statistics
-when "\$now >= $inject_stop_time" {
+when -label inject_stop "\$now >= $inject_stop_time" {
   if { $inject_stop_time != 0 } {
     # Enable Assertions again
     foreach assertion $assertion_disable_list {

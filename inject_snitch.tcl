@@ -23,26 +23,30 @@ set inject_stop_time             0
 set injection_clock          "clk"
 set injection_clock_trigger      0
 set fault_period                10
-set fault_duration               2ns
+set rand_initial_injection_phase 0
+set max_num_fault_inject         0
+set signal_fault_duration        2ns
+set register_fault_duration      0ns
 
 set allow_multi_bit_upset              0
 set check_core_output_modification     0
 set check_core_next_state_modification 0
+set reg_to_sig_ratio                   1
+set use_bitwidth_as_weight             1
 
 ######################
 #  Netlist Settings  #
 ######################
 
 # == Cores where faults will be injected ==
-#set target_cores {{0 0 0} {0 0 1}}
-set target_cores {{0 0 0}}
+set target_cores {{0 0 0} {0 0 1}}
 
 # == Select where to inject faults
-set inject_protected_states 1
+set inject_protected_states 0
 set inject_unprotected_states 0
-set inject_protected_regfile 1
+set inject_protected_regfile 0
 set inject_unprotected_regfile 0
-set inject_protected_lsu 1
+set inject_protected_lsu 0
 set inject_unprotected_lsu 0
 set inject_combinatorial_logic 1
 
@@ -67,59 +71,33 @@ foreach target $target_cores {
 
 # == Nets that can be flipped ==
 # leave empty {} to generate the netlist according to the settings above
-set force_flip_nets [list]
+set force_register_netlist [list]
+set force_signals_netlist [list]
 
-# Force some sets
-#set force_flip_nets [list \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/push_id \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/pop_id \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/id_table_push \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/id_table_pop \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/push_metadata \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/metadata_we \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/push_id \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/pop_id \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/id_table_push \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/id_table_pop \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/push_metadata \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/metadata_we \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_error \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wen_error \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/dmr_error_o \
-]
-
-#[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[0\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[1\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[2\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[3\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[4\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[5\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[6\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[7\] \
-
-set inject_netlist $force_flip_nets
+set inject_register_netlist $force_register_netlist
+set inject_signals_netlist $force_signals_netlist
 
 # check net list selection is forced
-if {[llength $force_flip_nets] == 0} {
+if {[llength $force_register_netlist] == 0} {
   foreach target $target_cores {
     foreach {group tile core} $target {}
     if {$inject_protected_states} {
-      set inject_netlist [concat $inject_netlist [get_snitch_protected_state_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_protected_state_netlist $group $tile $core]]
     }
     if {$inject_unprotected_states} {
-      set inject_netlist [concat $inject_netlist [get_snitch_unprotected_state_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_unprotected_state_netlist $group $tile $core]]
     }
     if {$inject_protected_regfile} {
-      set inject_netlist [concat $inject_netlist [get_snitch_protected_regfile_mem_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_protected_regfile_mem_netlist $group $tile $core]]
     }
     if {$inject_unprotected_regfile} {
-      set inject_netlist [concat $inject_netlist [get_snitch_unprotected_regfile_mem_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_unprotected_regfile_mem_netlist $group $tile $core]]
     }
     if {$inject_protected_lsu} {
-      set inject_netlist [concat $inject_netlist [get_snitch_protected_lsu_state_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_protected_lsu_state_netlist $group $tile $core]]
     }
     if {$inject_unprotected_lsu} {
-      set inject_netlist [concat $inject_netlist [get_snitch_unprotected_lsu_state_netlist $group $tile $core]]
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_unprotected_lsu_state_netlist $group $tile $core]]
     }
   }
 }
@@ -128,7 +106,7 @@ if {[llength $force_flip_nets] == 0} {
 if {$inject_combinatorial_logic} {
   foreach target $target_cores {
     foreach {group tile core} $target {}
-    set inject_netlist [concat $inject_netlist [get_all_core_nets $group $tile $core]]
+    set inject_signals_netlist [concat $inject_signals_netlist [get_all_core_nets $group $tile $core]]
   }
 }
 
