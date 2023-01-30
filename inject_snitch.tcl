@@ -48,6 +48,8 @@ set inject_protected_regfile 0
 set inject_unprotected_regfile 0
 set inject_protected_lsu 0
 set inject_unprotected_lsu 0
+set inject_protected_csr 0
+set inject_unprotected_csr 0
 set inject_combinatorial_logic 1
 
 ######################
@@ -98,6 +100,12 @@ if {[llength $force_register_netlist] == 0} {
     }
     if {$inject_unprotected_lsu} {
       set inject_register_netlist [concat $inject_register_netlist [get_snitch_unprotected_lsu_state_netlist $group $tile $core]]
+    }
+    if {$inject_protected_csr} {
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_protected_csr_netlist $group $tile $core]]
+    }
+    if {$inject_unprotected_csr} {
+      set inject_register_netlist [concat $inject_register_netlist [get_snitch_unprotected_csr_netlist $group $tile $core]]
     }
   }
 }

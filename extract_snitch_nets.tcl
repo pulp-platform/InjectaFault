@@ -261,6 +261,40 @@ proc get_snitch_unprotected_lsu_state_netlist {group tile core} {
   return $netlist
 }
 
+proc get_snitch_protected_csr_netlist {group tile core} {
+  set base [base_path $group $tile $core]
+  set netlist [list]
+  if {$::is_ecc_enabled} {
+    lappend netlist $base/csr_mhpm_parity_q
+    lappend netlist $base/csr_mhpmh_parity_q
+    lappend netlist $base/csr_mhpm_valid_q
+    lappend netlist $base/csr_mhpmh_valid_q
+    lappend netlist $base/cycle_q
+    lappend netlist $base/instret_q
+    lappend netlist $base/stall_ins_q
+    lappend netlist $base/stall_raw_q
+    lappend netlist $base/stall_lsu_q
+    lappend netlist $base/seu_detected_q
+  }
+  return $netlist
+}
+
+proc get_snitch_unprotected_csr_netlist {group tile core} {
+  set base [base_path $group $tile $core]
+  set netlist [list]
+  if {!$::is_ecc_enabled} {
+    lappend netlist $base/csr_mhpm_valid_q
+    lappend netlist $base/csr_mhpmh_valid_q
+    lappend netlist $base/cycle_q
+    lappend netlist $base/instret_q
+    lappend netlist $base/stall_ins_q
+    lappend netlist $base/stall_raw_q
+    lappend netlist $base/stall_lsu_q
+    lappend netlist $base/seu_detected_q
+  }
+  return $netlist
+}
+
 ######################
 #  Core Output Nets  #
 ######################
