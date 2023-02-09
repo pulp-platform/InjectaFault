@@ -62,11 +62,27 @@ proc get_net_reg_width {signal_name} {
   return $length
 }
 
+proc get_record_number_of_fields {signal_name} {
+  set sig_description [examine -describe $signal_name]
+  if {[regexp "^\{Record \\\[(\\d+) elements?\\\]" $sig_description -> num]} {
+    return $num
+  } else {
+    echo "\[Netlist Extraction Error\] Failed to extract the number of fields in record $signal_name."
+    return 0
+  }
+}
+
 proc get_record_field_names {signal_name} {
   set sig_description [examine -describe $signal_name]
-  set matches [regexp -all -inline "Element #\\d* \"\[a-zA-Z_\]\[a-zA-Z0-9_\]*\"" $sig_description]
-  set field_names {}
+  set matches [regexp -all -inline "\\n  Element #\\d* \"\[a-zA-Z_\]\[a-zA-Z0-9_\]*\"" $sig_description]
+  set field_names [list]
   foreach match $matches { lappend field_names [lindex [split $match \"] 1] }
+  set num_fields_expected [get_record_number_of_fields $signal_name]
+  if {[llength $field_names] != $num_fields_expected} {
+    echo "\[Netlist Extraction Error\] Could not determine the field names of signal $signal_name."
+    echo "Expected $num_fields_expected Fields, extracted [llength $field_names]: $field_names. Skipping this net..."
+    return [list]
+  }
   return $field_names
 }
 

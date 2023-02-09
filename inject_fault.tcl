@@ -24,6 +24,11 @@
 #                       0 : Disable logging (Default)
 #                       1 : Enable logging
 # 'seed'              : Set the seed for the number generator. Default: 12345
+# 'print_statistics'  : Print statistics about the fault injections at the end
+#                       of the fault injection. Which statistics are printed
+#                       also depends on other settings below.
+#                       0 : Don't print statistics
+#                       1 : Print statistics (Default)
 # ------------------------------- Timing settings -----------------------------
 # 'inject_start_time' : Earliest time of the first fault injection.
 # 'inject_stop_time'  : Latest possible time for a fault injection.
@@ -126,9 +131,10 @@
 ##################################
 
 # General
-if {![info exists verbosity]}      { set verbosity          2 }
-if {![info exists log_injections]} { set log_injections     0 }
-if {![info exists seed]}           { set seed           12345 }
+if {![info exists verbosity]}        { set verbosity          2 }
+if {![info exists log_injections]}   { set log_injections     0 }
+if {![info exists seed]}             { set seed           12345 }
+if {![info exists print_statistics]} { set print_statistics   1 }
 # Timing settings
 if {![info exists inject_start_time]}            { set inject_start_time          100ns }
 if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
@@ -159,11 +165,109 @@ source ../scripts/fault_injection/extract_nets.tcl
 #  Finish setup depending on settings  #
 ########################################
 
-# Set the seed
-expr srand($seed)
-
 # Common path sections of all nets where errors can be injected
-set netlist_common_path_sections [list]
+set ::netlist_common_path_sections [list]
+
+proc restart_fault_injection {} {
+  # Start the Error injection script
+  if {$::verbosity >= 1} {
+    echo "\[Fault Injection\] Info: Injection script running."
+  }
+
+  # Set the seed
+  expr srand($::seed)
+
+  # Last net that was flipped
+  set ::last_flipped_net ""
+
+  # Open the log file
+  if {$::log_injections} {
+    set time_stamp [exec date +%Y%m%d_%H%M%S]
+    set ::injection_log [open "fault_injection_$time_stamp.log" w+]
+    puts $::injection_log "timestamp,netname,pre_flip_value,post_flip_value,output_changed,new_state_changed"
+  } else {
+    set ::injection_log ""
+  }
+
+  # Dictionary to keep track of injections
+  set ::inject_dict [dict create]
+
+  # determine the phase for the initial fault injection
+  if {$::rand_initial_injection_phase} {
+    set ::prescaler [expr int(rand() * $::fault_period)]
+  } else {
+    set ::prescaler [expr $::fault_period - 1]
+  }
+
+  # Create all When statements
+
+  # start fault injection
+  when -label inject_start "\$now == $::inject_start_time" {
+    ::start_fault_injection
+    nowhen inject_start
+  }
+
+  # periodically inject faults
+  when -label inject_fault "\$now >= $::inject_start_time and $::injection_clock == $::injection_clock_trigger" {
+    ::inject_trigger
+  }
+
+  # stop the simulation and output statistics
+  when -label inject_stop "\$now >= $::inject_stop_time" {
+    if { $::inject_stop_time != 0 } {
+      ::stop_fault_injection
+    }
+    nowhen inject_stop
+  }
+}
+
+proc start_fault_injection {} {
+  if {$::verbosity >= 1} {
+    echo "[time_ns $::now]: \[Fault Injection\] Starting fault injection."
+  }
+  # Disable Assertions
+  foreach assertion $::assertion_disable_list {
+    assertion enable -off $assertion
+  }
+  # Reset statistics
+  set ::stat_num_bitflips 0
+  set ::stat_num_outputs_changed 0
+  set ::stat_num_state_changed 0
+  set ::stat_num_flip_propagated 0
+}
+
+################
+#  User Procs  #
+################
+
+proc stop_fault_injection {} {
+  # Stop fault injection
+  catch {nowhen inject_fault}
+  # Enable Assertions again
+  foreach assertion $::assertion_disable_list {
+    assertion enable -on $assertion
+  }
+  # Output simulation Statistics
+  if {$::verbosity >= 1 && $::print_statistics} {
+    echo " ========== Fault Injection Statistics ========== "
+    echo " Number of Bitflips : $::stat_num_bitflips"
+    if {$::check_core_output_modification} {
+      echo " Number of Bitflips propagated to outputs : $::stat_num_outputs_changed"
+    }
+    if {$::check_core_next_state_modification} {
+      echo " Number of Bitflips propagated to new state : $::stat_num_state_changed"
+    }
+    if {$::check_core_output_modification && $::check_core_next_state_modification} {
+      echo " Number of Bitflips propagated : $::stat_num_flip_propagated"
+    }
+    echo ""
+  }
+  # Close the logfile
+  if {$::log_injections} {
+    close $::injection_log
+  }
+  return $::stat_num_bitflips
+}
 
 #######################
 #  Helper Procedures  #
@@ -331,7 +435,7 @@ proc select_random_net {} {
     # determine the group
     set selec [expr rand() * $distribution_total_weight]
     dict for {group group_weight} $distribution_weight_dict {
-      if {$group_weight <= $selec} {
+      if {$selec <= $group_weight} {
         break
       } else {
         set selec [expr $selec - $group_weight]
@@ -396,194 +500,151 @@ proc flipbit {signal_name is_register} {
 #  Fault injection routine   #
 ##############################
 
-# Statistics
-set stat_num_bitflips 0
-set stat_num_outputs_changed 0
-set stat_num_state_changed 0
-set stat_num_flip_propagated 0
+proc inject_fault {} {
+  # record the output before the flip
+  set pre_flip_out_val [list]
+  if {$::check_core_output_modification} {
+    foreach net $::output_netlist {
+      lappend pre_flip_out_val [examine $net]
+    }
+  }
+  # record the new state before the flip
+  set pre_flip_next_state_val [list]
+  if {$::check_core_next_state_modification} {
+    foreach net $::next_state_netlist {
+      lappend pre_flip_next_state_val [examine $net]
+    }
+  }
 
-# Start the Error injection script
-if {$verbosity >= 1} {
-  echo "\[Fault Injection\] Injection script running."
+  # Questa currently has a bug that it won't force certain nets. So we retry
+  # until we successfully flip a net.
+  # The bug primarily affects arrays of structs:
+  # If you try to force a member/field of a struct in an array, QuestaSim will
+  # flip force that member/field in the struct/record with index 0 in the
+  # array, not at the array index that was specified.
+  set success 0
+  set attempts 0
+  while {!$success && [incr attempts] < 50} {
+    # get a random net
+    set net_selc_info [::select_random_net]
+    set net_to_flip [lindex $net_selc_info 0]
+    set is_register [lindex $net_selc_info 1]
+    # Check if the selected net is allowed to be flipped
+    set allow_flip 1
+    if {$is_register && !$::allow_multi_bit_upset} {
+      set net_value [examine -radixenumsymbolic $net_to_flip]
+      if {[dict exists $::inject_dict $net_to_flip] && [dict get $::inject_dict $net_to_flip] == $net_value} {
+        set allow_flip 0
+        if {$::verbosity >= 3} {
+          echo "[time_ns $::now]: \[Fault Injection\] Tried to flip [net_print_str $net_to_flip], but was already flipped."
+        }
+      }
+    }
+    # flip the random net
+    if {$allow_flip} {
+      set flip_return [::flipbit $net_to_flip $is_register]
+      if {[lindex $flip_return 0]} {
+        set success 1
+        if {$is_register && !$::allow_multi_bit_upset} {
+          # save the new value to the dict
+          dict set ::inject_dict $net_to_flip [examine -radixenumsymbolic $net_to_flip]
+        }
+      } else {
+        if {$::verbosity >= 3} {
+          echo "[time_ns $::now]: \[Fault Injection\] Failed to flip [net_print_str $net_to_flip]. Choosing another one."
+        }
+      }
+    }
+  }
+  if {$success} {
+    incr ::stat_num_bitflips
+    set ::last_flipped_net $net_to_flip
+
+    set flip_propagated 0
+    # record the output after the flip
+    set post_flip_out_val [list]
+    if {$::check_core_output_modification} {
+      foreach net $::output_netlist {
+        lappend post_flip_out_val [examine $net]
+      }
+      # check if the output changed
+      set output_state "not modified"
+      set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
+      if {$output_changed} {
+        set output_state "changed"
+        incr ::stat_num_outputs_changed
+        set flip_propagated 1
+      }
+    } else {
+      set output_changed "x"
+    }
+    # record the new state before the flip
+    set post_flip_next_state_val [list]
+    if {$::check_core_next_state_modification} {
+      foreach net $::next_state_netlist {
+        lappend post_flip_next_state_val [examine $net]
+      }
+      # check if the new state changed
+      set new_state_state "not modified"
+      set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
+      if {$new_state_changed} {
+        set new_state_state "changed"
+        incr ::stat_num_state_changed
+        set flip_propagated 1
+      }
+    } else {
+      set new_state_changed "x"
+    }
+
+    if {$flip_propagated} {
+      incr ::stat_num_flip_propagated
+    }
+    # display the result
+    if {$::verbosity >= 2} {
+      set print_str "[time_ns $::now]: \[Fault Injection\] "
+      append print_str "Flipped net [net_print_str $net_to_flip] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
+      if {$::check_core_output_modification} {
+        append print_str "Output signals $output_state. "
+      }
+      if {$::check_core_next_state_modification} {
+        append print_str "New state $new_state_state. "
+      }
+      echo $print_str
+    }
+    # Log the result
+    if {$::log_injections} {
+      puts $::injection_log "$::now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
+      flush $::injection_log
+    }
+  }
 }
 
-# Open the log file
-if {$log_injections} {
-  set time_stamp [exec date +%Y%m%d_%H%M%S]
-  set injection_log [open "fault_injection_$time_stamp.log" w+]
-  puts $injection_log "timestamp,netname,pre_flip_value,post_flip_value,output_changed,new_state_changed"
+proc ::inject_trigger {} {
+  # check if any nets are selected for injection
+  if {[llength $::inject_register_netlist] == 0 && \
+      [llength $::inject_signals_netlist] == 0} {
+    return
+  }
+  # check if we reached the injection limit
+  if {($::max_num_fault_inject != 0) && ($::stat_num_bitflips >= $::max_num_fault_inject)} {
+    # Stop the simulation
+    if {$::verbosity >= 2} {
+      echo "\[Fault Injection\] Injection limit ($::max_num_fault_inject) reached. Stopping error injection..."
+    }
+    ::stop_fault_injection
+    return
+  }
+  # increase prescaler
+  incr ::prescaler
+  if {$::prescaler == $::fault_period} {
+    set ::prescaler 0
+    # inject a fault
+    ::inject_fault
+  }
 }
 
 # Update the inject netlist
 updated_inject_netlist
 
-# start fault injection
-when -label inject_start "\$now == $inject_start_time" {
-  if {$verbosity >= 1} {
-    echo "$inject_start_time: \[Fault Injection\] Starting fault injection."
-  }
-  foreach assertion $assertion_disable_list {
-    assertion enable -off $assertion
-  }
-}
-
-# Dictionary to keep track of injections
-set inject_dict [dict create]
-
-# determine the phase for the initial fault injection
-if {$rand_initial_injection_phase} {
-  set prescaler [expr int(rand() * $fault_period)]
-} else {
-  set prescaler [expr $fault_period - 1]
-}
-
-# periodically inject faults
-when -label inject_fault "\$now >= $inject_start_time and $injection_clock == $injection_clock_trigger" {
-  incr prescaler
-  if {$prescaler == $fault_period && \
-      ([llength $inject_register_netlist] != 0 || \
-       [llength $inject_signals_netlist] != 0) && \
-      ($max_num_fault_inject == 0 || \
-      $stat_num_bitflips < $max_num_fault_inject)} {
-    set prescaler 0
-
-    # record the output before the flip
-    set pre_flip_out_val [list]
-    if {$check_core_output_modification} {
-      foreach net $output_netlist {
-        lappend pre_flip_out_val [examine $net]
-      }
-    }
-    # record the new state before the flip
-    set pre_flip_next_state_val [list]
-    if {$check_core_next_state_modification} {
-      foreach net $next_state_netlist {
-        lappend pre_flip_next_state_val [examine $net]
-      }
-    }
-
-    # Questa currently has a bug that it won't force certain nets. So we retry
-    # until we successfully flip a net.
-    # The bug primarily affects arrays of structs:
-    # If you try to force a member/field of a struct in an array, QuestaSim will
-    # flip force that member/field in the struct/record with index 0 in the
-    # array, not at the array index that was specified.
-    set success 0
-    set attempts 0
-    while {!$success && [incr attempts] < 50} {
-      # get a random net
-      set net_selc_info [select_random_net]
-      set net_to_flip [lindex $net_selc_info 0]
-      set is_register [lindex $net_selc_info 1]
-      # Check if the selected net is allowed to be flipped
-      set allow_flip 1
-      if {$is_register && !$allow_multi_bit_upset} {
-        set net_value [examine -radixenumsymbolic $net_to_flip]
-        if {[dict exists $inject_dict $net_to_flip] && [dict get $inject_dict $net_to_flip] == $net_value} {
-          set allow_flip 0
-          if {$verbosity >= 3} {
-            echo "[time_ns $now]: \[Fault Injection\] Tried to flip [net_print_str $net_to_flip], but was already flipped."
-          }
-        }
-      }
-      # flip the random net
-      if {$allow_flip} {
-        set flip_return [flipbit $net_to_flip $is_register]
-        if {[lindex $flip_return 0]} {
-          set success 1
-          if {$is_register && !$allow_multi_bit_upset} {
-            # save the new value to the dict
-            dict set inject_dict $net_to_flip [examine -radixenumsymbolic $net_to_flip]
-          }
-        } else {
-          if {$::verbosity >= 3} {
-            echo "[time_ns $now]: \[Fault Injection\] Failed to flip [net_print_str $net_to_flip]. Choosing another one."
-          }
-        }
-      }
-    }
-    if {$success} {
-      incr stat_num_bitflips
-
-      set flip_propagated 0
-      # record the output after the flip
-      set post_flip_out_val [list]
-      if {$check_core_output_modification} {
-        foreach net $output_netlist {
-          lappend post_flip_out_val [examine $net]
-        }
-        # check if the output changed
-        set output_state "not modified"
-        set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
-        if {$output_changed} {
-          set output_state "changed"
-          incr stat_num_outputs_changed
-          set flip_propagated 1
-        }
-      } else {
-        set output_changed "x"
-      }
-      # record the new state before the flip
-      set post_flip_next_state_val [list]
-      if {$check_core_next_state_modification} {
-        foreach net $next_state_netlist {
-          lappend post_flip_next_state_val [examine $net]
-        }
-        # check if the new state changed
-        set new_state_state "not modified"
-        set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
-        if {$new_state_changed} {
-          set new_state_state "changed"
-          incr stat_num_state_changed
-          set flip_propagated 1
-        }
-      } else {
-        set new_state_changed "x"
-      }
-
-      if {$flip_propagated} {
-        incr stat_num_flip_propagated
-      }
-      # display the result
-      if {$verbosity >= 2} {
-        set print_str "[time_ns $now]: \[Fault Injection\] "
-        append print_str "Flipped net [net_print_str $net_to_flip] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
-        if {$check_core_output_modification} {
-          append print_str "Output signals $output_state. "
-        }
-        if {$check_core_next_state_modification} {
-          append print_str "New state $new_state_state. "
-        }
-        echo $print_str
-      }
-      # Log the result
-      if {$log_injections} {
-        puts $injection_log "$now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
-        flush $injection_log
-      }
-    }
-  }
-}
-
-# stop the simulation and output statistics
-when -label inject_stop "\$now >= $inject_stop_time" {
-  if { $inject_stop_time != 0 } {
-    # Enable Assertions again
-    foreach assertion $assertion_disable_list {
-      assertion enable -on $assertion
-    }
-    # Output simulation Statistics
-    if {$verbosity >= 1} {
-      echo " ========== Fault Injection Statistics ========== "
-      echo " Number of Bitflips : $stat_num_bitflips"
-      echo " Number of Bitflips propagated to outputs : $stat_num_outputs_changed"
-      echo " Number of Bitflips propagated to new state : $stat_num_state_changed"
-      echo " Number of Bitflips propagated : $stat_num_flip_propagated"
-      echo ""
-    }
-    # Close the logfile
-    if {$log_injections} {
-      close $injection_log
-    }
-  }
-}
+# Reset the fault injection
+restart_fault_injection

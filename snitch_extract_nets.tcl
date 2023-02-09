@@ -21,8 +21,6 @@ set is_ecc_enabled [examine -radix binary [base_path 0 0 0]/EnableECCReg]
 # nets used for debugging
 lappend core_netlist_ignore *gen_stack_overflow_check*
 # nets that would crash the simulation if flipped
-lappend core_netlist_ignore *dmr*
-lappend core_netlist_ignore *hart_id*
 lappend core_netlist_ignore *clk_i
 lappend core_netlist_ignore *rst_ni
 lappend core_netlist_ignore *rst_i
@@ -190,13 +188,19 @@ proc get_snitch_protected_regfile_mem_netlist {group tile core} {
 proc get_snitch_unprotected_regfile_mem_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
-  if {$::is_ecc_enabled || ($core % 2 == 0 && $::is_dmr_enabled)}{return $netlist}
+  if {$::is_ecc_enabled || ($core % 2 == 0 && $::is_dmr_enabled)} {return $netlist}
 
   for {set i 0} {$i < 32} {incr i} {
     lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
   }
 
   return $netlist
+}
+
+proc get_snitch_regfile_mem_netlist {group tile core} {
+  set protected_netlist [get_snitch_protected_regfile_mem_netlist $group $tile $core]
+  set unprotected_netlist [get_snitch_unprotected_regfile_mem_netlist $group $tile $core]
+  return [concat $protected_netlist $unprotected_netlist]
 }
 
 proc lsu_is_dmr_master {group tile core} {
@@ -261,6 +265,12 @@ proc get_snitch_unprotected_lsu_state_netlist {group tile core} {
   return $netlist
 }
 
+proc get_snitch_lsu_state_netlist {group tile core} {
+  set protected_netlist [get_snitch_protected_lsu_state_netlist $group $tile $core]
+  set unprotected_netlist [get_snitch_unprotected_lsu_state_netlist $group $tile $core]
+  return [concat $protected_netlist $unprotected_netlist]
+}
+
 proc get_snitch_protected_csr_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
@@ -275,6 +285,9 @@ proc get_snitch_protected_csr_netlist {group tile core} {
     lappend netlist $base/stall_raw_q
     lappend netlist $base/stall_lsu_q
     lappend netlist $base/seu_detected_q
+  }
+  if {$::is_dmr_enabled} {
+    lappend netlist $base/dmr_sts_q
   }
   return $netlist
 }
@@ -293,6 +306,28 @@ proc get_snitch_unprotected_csr_netlist {group tile core} {
     lappend netlist $base/seu_detected_q
   }
   return $netlist
+}
+
+proc get_snitch_csr_netlist {group tile core} {
+  set protected_netlist [get_snitch_protected_csr_netlist $group $tile $core]
+  set unprotected_netlist [get_snitch_unprotected_csr_netlist $group $tile $core]
+  return [concat $protected_netlist $unprotected_netlist]
+}
+
+proc get_snitch_all_protected_reg_netlist {group tile core} {
+  set state_netlist [get_snitch_protected_state_netlist $group $tile $core]
+  set regfile_mem_netlist [get_snitch_protected_regfile_mem_netlist $group $tile $core]
+  set lsu_state_netlist [get_snitch_protected_lsu_state_netlist $group $tile $core]
+  set csr_netlist [get_snitch_protected_csr_netlist $group $tile $core]
+  return [concat $state_netlist $regfile_mem_netlist $lsu_state_netlist $csr_netlist]
+}
+
+proc get_snitch_all_reg_netlist {group tile core} {
+  set state_netlist [get_snitch_state_netlist $group $tile $core]
+  set regfile_mem_netlist [get_snitch_regfile_mem_netlist $group $tile $core]
+  set lsu_state_netlist [get_snitch_lsu_state_netlist $group $tile $core]
+  set csr_netlist [get_snitch_csr_netlist $group $tile $core]
+  return [concat $state_netlist $regfile_mem_netlist $lsu_state_netlist $csr_netlist]
 }
 
 ######################
