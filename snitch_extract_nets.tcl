@@ -168,7 +168,7 @@ proc get_snitch_protected_regfile_mem_netlist {group tile core} {
     # Protected Master
     if {$::is_dmr_enabled} {
       for {set i 0} {$i < 32} {incr i} {
-        lappend netlist $base/gen_dmr_master_regfile/i_snitch_regfile/mem\[$i\]
+        lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
       }
     } elseif {$::is_ecc_enabled} {
       for {set i 0} {$i < 32} {incr i} {
@@ -178,8 +178,14 @@ proc get_snitch_protected_regfile_mem_netlist {group tile core} {
   } else {
     # Protected Slave
     if {$::is_ecc_enabled} {
-      for {set i 0} {$i < 32} {incr i} {
-        lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
+      if {$::is_dmr_enabled} {
+        for {set i 0} {$i < 32} {incr i} {
+          lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
+        }
+      } else {
+        for {set i 0} {$i < 32} {incr i} {
+          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
+        }
       }
     }
   }
@@ -191,10 +197,15 @@ proc get_snitch_unprotected_regfile_mem_netlist {group tile core} {
   set netlist [list]
   if {$::is_ecc_enabled || ($core % 2 == 0 && $::is_dmr_enabled)} {return $netlist}
 
-  for {set i 0} {$i < 32} {incr i} {
-    lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
+  if {$::is_dmr_enabled && ($core % 2 == 1) && !$::is_ecc_enabled} {
+    for {set i 0} {$i < 32} {incr i} {
+      lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
+    }
+  } else {
+    for {set i 0} {$i < 32} {incr i} {
+      lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
+    }
   }
-
   return $netlist
 }
 
