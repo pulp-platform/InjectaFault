@@ -25,6 +25,7 @@ lappend core_netlist_ignore *clk_i
 lappend core_netlist_ignore *rst_ni
 lappend core_netlist_ignore *rst_i
 lappend core_netlist_ignore *rst
+lappend core_netlist_ignore *dmr*
 # registers/memories
 lappend core_netlist_ignore *mem
 lappend core_netlist_ignore *_q

@@ -5,20 +5,20 @@
 # Author: Luca Rufer (lrufer@student.ethz.ch)
 
 # Description: This script uses the fault injection script and the termination
-#              monitor to determine the vulnerability of a curcuit to injected
-#              faults (bit flips).
+#              monitor to find which nets from a given list are vulnerable
+#              to injected faults (bit flips).
 #              The script first runs the testbench without an injected error
 #              to get a 'golden model' for the execution time and the final
 #              internal state.
 #              After creating the golden model, the script resets the simulation
-#              and starts the testbench again and injects exactly one fault into
-#              the simulation. The vulnerability analysis uses the
+#              and starts the testbench again, but with periodical fault
+#              injection. The vulnerable net analysis uses the
 #              'inject_fault.tcl' script to inject faults. ***It is in the
 #              responsibility of the user to configure the settings for the
 #              fault injection***.
-#              While the simulation is running and an errors is injected, the
-#              script checks for the following 5 termination causes using the
-#              termination monitor:
+#              While the simulation is running and more errors are
+#              injected, the script checks for the following 5 termination
+#              causes using the termination monitor:
 #               0) The termination monitor reports that the simulation
 #                  terminated without errors and the internal state of the
 #                  simulation with fault injections matches the internal state
@@ -27,7 +27,7 @@
 #                  terminated without errors, but the internal state of the
 #                  is not the same as the golden model. This case is the
 #                  'Latent' case, as it terminated corretly, but more errors
-#                  migth occur if the programm is allowed to continue running.
+#                  migth occur if the programm is allowed to continue running
 #               2) The termination monitor reports a program termination with an
 #                  'Incorrect' signal.
 #               3) The termination motitor reports an exception, or an invalid
@@ -37,11 +37,22 @@
 #                  simulation compared to the golden model, indicating that
 #                  the simulation is stuck in an infinite (or very long) loop,
 #                  or encountered a dead-lock.
-#              For every run of the vulnerability analysis the net name,
-#              injection time and the termination cause is logged.
+#              As an injected error may not lead to an error immediately, a
+#              non-correct termination might not be caused by the last error
+#              that was injected, but by an earlier error. To determine the
+#              fault which caused the programm to terminate non-correctly,
+#              this script runs the testbench again with the same random seed,
+#              but with a different amount of injected errors. A binary search
+#              is performed until the earliest injected fault is found that
+#              causes the program to terminate non-correctly, even if the
+#              termination cause is not the same as in the fist simulation with
+#              injected faults.
+#              When a vulnerable net was found using the above binary search
+#              algorithm, the net name, the seed and more information is logged
+#              to allow for the error to be re-created.
 
 # ============ List of variables that may be passed to this script ============
-# Any of these variables may not be changed while the vulnerability analysis
+# Any of these variables may not be changed while the vulnerable net analysis
 # is running, unless noted otherwise. Changing any of the settings during
 # runtime may result in undefined behaviour.
 # ---------------------------------- General ----------------------------------
@@ -62,53 +73,33 @@
 #                        - termination_monitor.tcl
 #                        - inject_fault.tcl
 #                       Default is set to './'
-# --------------------------- Vulnerability Analysis --------------------------
-# 'initial_seed'      : The initial random seed that is used for the random time
-#                       and net selection for the fault injection. The seed is
-#                       increased for every injection test round.
-#                       The default value is 12345.
-# 'max_num_tests'     : Maximum number of tests. Default is 1.
+# --------------------------- Vulnerabile Net Analysis --------------------------
+# 'initial_seed'      : The first random seed that is used for the random
+#                       fault injection. The rand() function is never used in
+#                       this script directly, only in the fault injection
+#                       script. The default value is 12345.
+# 'max_num_tests'     : Maximum number of seeds to be tested. Default is 1
 # 'internal_state'    : A list of signals that compose the internal state of
 #                       the simulated circuit. This list of signals is used
-#                       to check for latent erorrs in simulations with an
-#                       injected error. If internal state check is not required,
-#                       leave this list empty (default).
-# 'earliest_injection_time' : The earliest time the fault may be injected into
-#                       the simulation. Default is 0.
-# 'latest_injection_time' : The latest time the fault may be injected into
-#                       the simulation. If set to 0, this variable will be
-#                       set to the execution time of the golden model (Default).
-#                       If set to a negative number, this variable will be
-#                       changed to the execution time of the golden model plus
-#                       this negative number.
+#                       to check for latent erorrs in simulations with injected
+#                       errors. If internal state check is not required, leave
+#                       this list empty (default).
 # ------------------------ Termination Monitor Signals ------------------------
 # 'correct_termination_signal' : Path to the testbench signal that indicates
 #                       a correct termination of the simulation. Note that an
 #                       'x' or 'z' on this signal is interpreted as an
 #                       exception. This parameter MUST be provided by the user
 #                       and has no default value.
-# 'incorrect_termination_signal' : Path to the testbench signal that indicates
+# 'incorrect_termination_signal : Path to the testbench signal that indicates
 #                       an incorrect termination of the simulation. Note that an
 #                       'x' or 'z' on this signal is interpreted as an
 #                       exception. If no net is given for this signal, the same
 #                       signal as for the exception monitoring is used.
-# 'exception_termination_signal' : Path to the testbench signal that indicates
+# 'exception_termination_signal : Path to the testbench signal that indicates
 #                       an exception occured in the simulation. Note that an
 #                       'x' or 'z' on this signal is also interpreted as an
 #                       exception. This parameter MUST be provided by the user
 #                       and has no default value.
-# --------------------------- Manual Mode Settings ----------------------------
-# 'show_waves'        : Show the waves of the nets where faults can be injected
-#                       in the default wave window.
-#                       0 : Don't log and show the waves (default).
-#                       1 : Log and show the waves.
-# 'show_fault_in_waves' : Focus the currently active cursor in the currently
-#                       active wave window to the time instance where the fault
-#                       was injected. This can make debugging faster in manual
-#                       mode.
-#                       0 : Do not modify cursor and wave windows (default).
-#                       1 : Focus the cursor and window time to the fault
-#                           injection.
 
 ##################################
 #  Set default parameter values  #
@@ -119,32 +110,39 @@ if {![info exists ::verbosity]}          { set ::verbosity             2 }
 if {![info exists ::initial_run_script]} { set ::initial_run_script   "" }
 if {![info exists ::script_base_path]}   { set ::script_base_path   "./" }
 
-# Vulnerability Analysis
-if {![info exists ::initial_seed]}            { set ::initial_seed        12345 }
-if {![info exists ::max_num_tests]}           { set ::max_num_tests           1 }
-if {![info exists ::internal_state]}          { set ::internal_state     [list] }
-if {![info exists ::earliest_injection_time]} { set ::earliest_injection_time 0 }
-if {![info exists ::latest_injection_time]}   { set ::latest_injection_time   0 }
+# Vulnerabile Net Analysis
+if {![info exists ::initial_seed]}   { set ::initial_seed    12345 }
+if {![info exists ::max_num_tests]}  { set ::max_num_tests       1 }
+if {![info exists ::internal_state]} { set ::internal_state [list] }
 
 # Termination Monitor Signals
 if {![info exists ::correct_termination_signal] || \
     ![info exists ::exception_termination_signal]} {
-  echo "\[Vulnerability Analysis\] Error: some mandatory variables were not set."
+  echo "\[Vulnerabile Net Analysis\] Error: some mandatory variables were not set."
   quit -code 1
 }
 if {![info exists ::incorrect_termination_signal]} \
   { set ::incorrect_termination_signal $::exception_termination_signal }
 
-# Manual Mode Settings
-if {![info exists ::show_waves         ]} { set ::show_waves          0 }
-if {![info exists ::show_fault_in_waves]} { set ::show_fault_in_waves 0 }
+###################
+#  Utility procs  #
+###################
+
+proc reset_bisection {} {
+  # reset the bisection variables
+  set ::bisect_low 0
+  set ::bisect_high 0
+
+  # Remove the limit to the number of injected faults.
+  set ::max_num_fault_inject 0
+}
 
 ######################################
 #  Termination monitor return procs  #
 ######################################
 
 # Post-process the id that was returned from the fault monitor
-proc vulnerability_process_termination_id {id} {
+proc vulnerable_net_process_termination_id {id} {
   # If terminated correctly, check internal state
   if {$id == 0} {
     # Examine the final state
@@ -166,7 +164,7 @@ proc vulnerability_process_termination_id {id} {
       # Change id if state mismatches were found
       set id 1
       if {$::verbosity >= 2} {
-        echo "\[Vulnerability Analysis\] Internal state check failed:"
+        echo "\[Vulnerabile Net Analysis\] Internal state check failed:"
         foreach i $state_mismatches {
           set final_state_net_val [lindex $final_state $i]
           set golden_model_net_val [lindex $::golden_model_final_state $i]
@@ -175,7 +173,7 @@ proc vulnerability_process_termination_id {id} {
       }
     } else {
       if {$::verbosity >= 2} {
-        echo "\[Vulnerability Analysis\] State check successful."
+        echo "\[Vulnerabile Net Analysis\] State check successful."
       }
     }
   }
@@ -187,14 +185,15 @@ proc golden_model_termination_report {id} {
   # Check that the golden model finished correctly
   if {$id != 0} {
     if {$::verbosity >= 2} {
-      echo "\[Vulnerability Analysis\] Error: Golden Model did not terminate correctly."
+      echo "\[Vulnerabile Net Analysis\] Error: Golden Model did not terminate correctly."
     }
     quit -code 1
+    exit
   } else {
     # Record the execution time of the golden model
     set ::golden_model_execution_time $::now
     if {$::verbosity >= 2} {
-      echo "\[Vulnerability Analysis\] Golden model finished within $::golden_model_execution_time ps."
+      echo "\[Vulnerabile Net Analysis\] Golden model finished within $::golden_model_execution_time ps."
     }
     # Record the final state of the golden model
     set ::golden_model_final_state [list]
@@ -210,87 +209,100 @@ proc golden_model_termination_report {id} {
 # Termination proc for the injected simulation (called by Termination Monitor)
 proc injection_termination_report {id} {
   # Post-process the id
-  set id [vulnerability_process_termination_id $id]
+  set id [vulnerable_net_process_termination_id $id]
 
   if {$::verbosity >= 2} {
-    echo "\[Vulnerability Analysis\]\
-          Flipped $::last_flipped_net at time $::injection_time.\
-          Injection terminated with id $id."
+    echo "\[Vulnerabile Net Analysis\] Injection terminated with id $id. \
+          Flipped $::stat_num_bitflips nets, \
+          maximum number of flips was set to $::max_num_fault_inject."
   }
 
+  # Check if the current seed has finished testing
+  set finished_seed 0
+  if {($id == 0 && $::max_num_fault_inject == 0) ||\
+      ($::stat_num_bitflips == 1)} {
+    # Simulation ended first try or first flip caused a problem
+    set finished_seed 1
+    set log_string "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
+  } else {
+    # Simulation fault source not determined yet. Run bisection.
+    # Test if first bisection step
+    if { $::max_num_fault_inject == 0} {
+      set ::bisect_high $::stat_num_bitflips
+    }
+    # Test if last bisection step
+    if {$::bisect_high - $::bisect_low == 1} {
+      # Termination condition reached.
+      # Check if bisection was successful
+      if {$::stat_num_bitflips == $::bisect_low} {
+        if {$id == 0} {
+          # Bisection successful, continue with next seed
+          set finished_seed 1
+          set log_string $::last_failing_log_string
+        } else {
+          # Bisection failed, another error exists at a lower position
+          set ::bisect_low 0
+        }
+      } else {
+        if {$id == 0} {
+          # This should not be happening, something failed
+          echo "\[Vulnerabile Net Analysis\] Bisection failed. This should not be happening..."
+        } else {
+          # Run the simulation again with the lower boundary to make sure everything is ok.
+        }
+      }
+    } else {
+      if {$id == 0} {
+        # Error not encountered. Error is higher, first num_bitflips are not the source
+        set ::bisect_low $::stat_num_bitflips
+      } else {
+        # Error encountered. Error source is lower.
+        set ::bisect_high $::stat_num_bitflips
+      }
+    }
+  }
+
+  # record a log string if simulation terminated non-correctly
   if {$id != 0} {
-    incr ::num_tests_failed
+    set ::last_failing_log_string "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
   }
 
-  # Log the results
-  puts $::vulnerability_log "$id,$::injection_time,$::last_flipped_net"
-  flush $::vulnerability_log
+  # calulate the next bisection step
+  set ::max_num_fault_inject [expr ($::bisect_low + $::bisect_high) / 2]
 
+  if {$finished_seed} {
+    # Log the results
+    puts $::vulnerable_net_log $log_string
+    flush $::vulnerable_net_log
+
+    # Print the results
+    if {$::verbosity >= 2} {
+      echo "\[Vulnerabile Net Analysis\] Finished Testing Seed: $::seed."
+    }
+
+    # Continue with the next seed and reset the bisection parameters
+    incr ::seed
+    reset_bisection
+
+  } else {
+    if {$::verbosity >= 2} {
+      echo "\[Vulnerabile Net Analysis\] Bisection Info: \
+        Seed: $::seed, Lower Bound: $::bisect_low, Upper Bound: $::bisect_high, \
+        Next Try: $::max_num_fault_inject."
+    }
+  }
   # Indicate that the monitor was triggered (helps to rule out assertions)
   set ::monitor_triggered 1
 }
 
-###################
-#  Utility Procs  #
-###################
-
-proc get_random_injection_time {} {
-  set low $::earliest_injection_time
-  set high $::latest_injection_time
-  return [expr $low + int(rand() * ($high - $low))]
-}
-
-#################################
-#  Vulnerability Analysis Round #
-#################################
-
-proc vulnerability_analysis_fault_round {} {
-  # Restart the simulation
-  if {$::verbosity >= 1} {
-    echo "\[Vulnerability Analysis\] Reached End of simulation. Restarting..."
-  }
-  restart -f
-
-  set ::injection_time [get_random_injection_time]
-  set ::forced_injection_times [subst {$::injection_time}]
-
-  # Restart the fault injection script
-  incr ::seed
-  restart_fault_injection
-
-  # Run the simulation
-  run -all
-
-  # --- Wait for the simulation to finish ---
-
-  # Make sure the stop was triggered by a monitor, otherwise end the script
-  # and let the user take over
-  if {!$::monitor_triggered} { exit }
-  set ::monitor_triggered 0
-
-  incr ::num_tests_finished
-  if {$::verbosity >= 2} {
-    echo "\[Vulnerability Analysis\] Current vulnerability: \
-          $::num_tests_failed/$::num_tests_finished."
-  }
-
-  # Manual Mode options
-  if {$::show_fault_in_waves} {
-    # move the cursor to the injection time
-    wave cursor time -time $::injection_time
-    # move the wave window to the cursor
-    wave cursor see -at 50
-  }
-}
-
 ###############################################
-#  Main Thread of the Vulnerability Analysis  #
+#  Main Thread of the Vulnerabile Net Analysis  #
 ###############################################
 
 # Create the log file
 set time_stamp [exec date +%Y%m%d_%H%M%S]
-set ::vulnerability_log [open "vulnerability_$time_stamp.log" w+]
-puts $::vulnerability_log "termination_cause,injection_time,injected_net_name"
+set ::vulnerable_net_log [open "vulnerable_net_$time_stamp.log" w+]
+puts $::vulnerable_net_log "seed,termination_cause,num_faults_injected,last_injected_net_name"
 
 # Create the monitor triggered variable
 set ::monitor_triggered 0
@@ -312,18 +324,6 @@ set ::termination_report_proc golden_model_termination_report
 # Setup the monitors
 source [subst ${::script_base_path}termination_monitor.tcl]
 
-# Setup manual mode
-if {$::show_waves} {
-  foreach net $::inject_register_netlist {
-    log $net
-    add wave $net
-  }
-  foreach net $::inject_signals_netlist {
-    log $net
-    add wave $net
-  }
-}
-
 # Source the run script
 if ([string equal $::initial_run_script ""]) {
   run -all
@@ -337,12 +337,12 @@ if ([string equal $::initial_run_script ""]) {
 if {!$::monitor_triggered} { exit }
 set ::monitor_triggered 0
 
-########################
-#  Find vulnerability  #
-########################
+##########################
+#  Find vulnerable nets  #
+##########################
 
-set ::num_tests_finished 0
-set ::num_tests_failed 0
+# Initialize the bisection
+reset_bisection
 
 # update the termination monitor with an appropriate timeout
 set timeout_monitor [expr round($::golden_model_execution_time * 1.2)]
@@ -350,31 +350,32 @@ lappend ::termination_signal_list [subst {4 $timeout_monitor "Timeout"}]
 set ::termination_report_proc injection_termination_report
 termination_reset_monitors
 
-# update the latest injection time
-if {$::latest_injection_time <= 0} {
-  set ::latest_injection_time [expr $::latest_injection_time + $::golden_model_execution_time]
-  if {$::verbosity >= 2} {
-     echo "\[Vulnerability Analysis\] Set latest injection time to $::latest_injection_time."
-  }
-}
-
 # Source the fault injection script to start fault injection
-# The parameters for the fault injection script have to be set up by the user,
-# but some are explicitly set here:
-set ::seed $::initial_seed
-set injection_clock ""
-set forced_injection_times [list]
-set forced_injection_signals [list]
-set ::include_forced_inj_in_stats 1
+# The parameters for the fault injection script have to be set up by the user.
 source [subst ${::script_base_path}inject_fault.tcl]
 
-# Execute the tests
-for {set i 0} { $i < $max_num_tests } { incr i } {
-  vulnerability_analysis_fault_round
+# Loop forever
+while {$::seed < $::initial_seed + $::max_num_tests} {
+  # Restart the simulation
+  if {$::verbosity >= 1} {
+    echo "\[Vulnerabile Net Analysis\] Reached End of simulation. Restarting..."
+  }
+  restart -f
+
+  # Restart the fault injection script
+  restart_fault_injection
+
+  # Run the simulation
+  run -all; run -all
+
+  # --- Wait for the simulation to finish ---
+
+  # Make sure the stop was triggered by a monitor, otherwise end the script
+  # and let the user take over
+  if {!$::monitor_triggered} { exit }
+  set ::monitor_triggered 0
 }
 
 if {$::verbosity >= 1} {
-  echo "\[Vulnerability Analysis\] Reached the end of the automatic \
-        vulnerability analysis. You can manually run more test by running \
-        'vulnerability_analysis_fault_round'."
+  echo "\[Vulnerabile Net Analysis\] Reached the end of the vulnerable net analysis."
 }

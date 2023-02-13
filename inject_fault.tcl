@@ -36,6 +36,8 @@
 # 'injection_clock'   : Absolute path to the net that is used as an injected
 #                       trigger and clock. Can be a special trigger clock in
 #                       the testbench, or the normal system clock.
+#                       If 'injection_clock' is set to an empty string (""),
+#                       this script will not perform periodical fault injection.
 # 'injection_clock_trigger' : Signal value of 'injection_clock' that triggers
 #                       the fault injection. If a normal clock of a rising edge
 #                       triggered circuit is used as injection clock, it is
@@ -58,6 +60,37 @@
 #                       simualtion finishes before, or if the 'inject_stop_time'
 #                       is reached. If 'max_num_fault_inject' is set to 0, this
 #                       setting is ignored (default).
+# 'forced_injection_times' : Provide an explicit list of times when faults are
+#                       to be injected into the simulation. If an empty
+#                       'forced_injection_signals' list is provided, the signals
+#                       are selected at random according to the Flip settings.
+#                       By default, this list is empty.
+#                       Note that flips forced by this list are not bound
+#                       by the 'inject_start_time' and 'inject_stop_time'.
+#                       Flips forced by this list only count towards the
+#                       'max_num_fault_inject' limit if
+#                       'include_forced_inj_in_stats' is set to 1.
+# 'forced_injection_signals' : Provide an explicit list of signals where faults
+#                       are to be injected into the simulation at the
+#                       'forced_injection_times'. This list must have the same
+#                       length as 'forced_injection_times'. Entries in the list
+#                       must have the format {'signal_name' 'is_register}.
+#                       For example: {{"tb/data_q" 1} {"tb/enable" 0}}
+#                       If this list is empty, the signals to be injected at the
+#                       'forced_injection_times' are selected randomly according
+#                       to the settings below (default).
+#                       Note that listing enums, or signals with a width wider
+#                       than one bit will case a random bit to be selected,
+#                       which will alter the outcome of the periodic random
+#                       fault injection.
+# 'include_forced_inj_in_stats' : Select wether the forced injections should be
+#                       included in the statistics or not. Including them in the
+#                       statistics will also cause them to be logged (if logging
+#                       is enabled) and variables like 'last_flipped_net' to be
+#                       changed.
+#                       0: Don't include forced injections in statistics and
+#                          logs (default).
+#                       1: Include forced injections in statistics and logs.
 # 'signal_fault_duration' : Duration of faults injected into combinatorial
 #                       signals, before the original value is restored.
 # 'register_fault_duration' : Minumum duration of faults injected into
@@ -143,6 +176,9 @@ if {![info exists injection_clock_trigger]}      { set injection_clock_trigger  
 if {![info exists fault_period]}                 { set fault_period                 0   }
 if {![info exists rand_initial_injection_phase]} { set rand_initial_injection_phase 0   }
 if {![info exists max_num_fault_inject]}         { set max_num_fault_inject         0   }
+if {![info exists forced_injection_times]}       { set forced_injection_times   [list]  }
+if {![info exists forced_injection_signals]}     { set forced_injection_signals [list]  }
+if {![info exists include_forced_inj_in_stats]}  { set include_forced_inj_in_stats  0   }
 if {![info exists signal_fault_duration]}        { set signal_fault_duration        1ns }
 if {![info exists register_fault_duration]}      { set register_fault_duration      0ns }
 # Flip settings
@@ -158,6 +194,17 @@ if {![info exists output_netlist]}          { set output_netlist          [list]
 if {![info exists next_state_netlist]}      { set next_state_netlist      [list] }
 if {![info exists assertion_disable_list]}  { set assertion_disable_list  [list] }
 
+# Additional checks
+if {[llength $forced_injection_times] != [llength $forced_injection_signals] && \
+    [llength $forced_injection_times] != 0 && \
+    [llength $forced_injection_signals] != 0} {
+  if {$::verbosity >= 1} {
+    echo "\[Fault Injection\] Error: 'forced_injection_times' and \
+         'forced_injection_signals' don't have the same non-zero length!"
+  }
+  exit
+}
+
 # Source generic netlist extraction procs
 source ../scripts/fault_injection/extract_nets.tcl
 
@@ -172,6 +219,13 @@ proc restart_fault_injection {} {
   # Start the Error injection script
   if {$::verbosity >= 1} {
     echo "\[Fault Injection\] Info: Injection script running."
+  }
+
+  # cleanup from previous runs
+  if {[info exists ::forced_injection_when_labels]} {
+    foreach l $::forced_injection_when_labels {
+      catch {nowhen $l}
+    }
   }
 
   # Set the seed
@@ -199,25 +253,64 @@ proc restart_fault_injection {} {
     set ::prescaler [expr $::fault_period - 1]
   }
 
+  # List of when-statement labels of forced injection times
+  set ::forced_injection_when_labels [list]
+
+  # determine the first injection time
+  set start_time [earliest_time [concat $::forced_injection_times $::inject_start_time]]
+
+  # determine the injection stop time
+  if {$::inject_stop_time == 0 && ![string equal $::injection_clock ""]} {
+    set stop_time 0
+  } else {
+    set stop_time [latest_time [concat $::forced_injection_times $::inject_stop_time]]
+  }
+
   # Create all When statements
 
   # start fault injection
-  when -label inject_start "\$now == $::inject_start_time" {
+  when -label inject_start "\$now == $start_time" {
     ::start_fault_injection
     nowhen inject_start
   }
 
   # periodically inject faults
-  when -label inject_fault "\$now >= $::inject_start_time and $::injection_clock == $::injection_clock_trigger" {
-    ::inject_trigger
+  if {![string equal $::injection_clock ""]} {
+    when -label inject_fault "\$now >= $::inject_start_time and $::injection_clock == $::injection_clock_trigger" {
+      ::inject_trigger
+    }
+  }
+
+  # forced injection times
+  for {set i 0} { $i < [llength $::forced_injection_times] } { incr i } {
+    set label "forced_injection_$i"
+    set t [lindex $::forced_injection_times $i]
+    if {[llength $::forced_injection_signals] == 0} {
+      set cmd "::inject_fault $::include_forced_inj_in_stats"
+    } else {
+      # Extract the signal infos
+      set signal_info [lindex $::forced_injection_signals $i]
+      foreach {signal_name is_register} $signal_info {}
+      if {$::include_forced_inj_in_stats} {
+        set cmd "fault_injection_pre_flip_statistics; \
+                 set flip_return \[::flipbit $signal_name $is_register\]; \
+                 fault_injection_post_flip_statistics $signal_name \$flip_return"
+      } else {
+        set cmd "::flipbit $signal_name $is_register"
+      }
+    }
+    # Create the when statement to flip the bit
+    when -label $label "\$now == $t" "$cmd"
+    # Store the label
+    lappend ::forced_injection_when_labels $label
   }
 
   # stop the simulation and output statistics
-  when -label inject_stop "\$now >= $::inject_stop_time" {
-    if { $::inject_stop_time != 0 } {
+  if {$stop_time != 0} {
+    when -label inject_stop "\$now >= $stop_time" {
       ::stop_fault_injection
+      nowhen inject_stop
     }
-    nowhen inject_stop
   }
 }
 
@@ -272,6 +365,32 @@ proc stop_fault_injection {} {
 #######################
 #  Helper Procedures  #
 #######################
+
+proc earliest_time {time_list} {
+  if {[llength $time_list] == 0} {
+    return 0
+  }
+  set earliest [lindex $time_list 0]
+  foreach t $time_list {
+    if {[ltTime $t $earliest]} {
+      set earliest $t
+    }
+  }
+  return $earliest
+}
+
+proc latest_time {time_list} {
+  if {[llength $time_list] == 0} {
+    return -1
+  }
+  set latest [lindex $time_list 0]
+  foreach t $time_list {
+    if {[gtTime $t $latest]} {
+      set latest $t
+    }
+  }
+  return $latest
+}
 
 proc time_ns {time_ps} {
   set time_str ""
@@ -496,25 +615,96 @@ proc flipbit {signal_name is_register} {
   return $result
 }
 
+################################
+#  Fault Injection Statistics  #
+################################
+
+proc fault_injection_pre_flip_statistics {} {
+  # record the output before the flip
+  set ::pre_flip_out_val [list]
+  if {$::check_core_output_modification} {
+    foreach net $::output_netlist {
+      lappend ::pre_flip_out_val [examine $net]
+    }
+  }
+  # record the new state before the flip
+  set ::pre_flip_next_state_val [list]
+  if {$::check_core_next_state_modification} {
+    foreach net $::next_state_netlist {
+      lappend ::pre_flip_next_state_val [examine $net]
+    }
+  }
+}
+
+proc fault_injection_post_flip_statistics {flipped_net flip_return} {
+  incr ::stat_num_bitflips
+  set ::last_flipped_net $flipped_net
+
+  set flip_propagated 0
+  # record the output after the flip
+  set post_flip_out_val [list]
+  if {$::check_core_output_modification} {
+    foreach net $::output_netlist {
+      lappend post_flip_out_val [examine $net]
+    }
+    # check if the output changed
+    set output_state "not modified"
+    set output_changed [expr ![string equal $::pre_flip_out_val $post_flip_out_val]]
+    if {$output_changed} {
+      set output_state "changed"
+      incr ::stat_num_outputs_changed
+      set flip_propagated 1
+    }
+  } else {
+    set output_changed "x"
+  }
+  # record the new state before the flip
+  set post_flip_next_state_val [list]
+  if {$::check_core_next_state_modification} {
+    foreach net $::next_state_netlist {
+      lappend post_flip_next_state_val [examine $net]
+    }
+    # check if the new state changed
+    set new_state_state "not modified"
+    set new_state_changed [expr ![string equal $::pre_flip_next_state_val $post_flip_next_state_val]]
+    if {$new_state_changed} {
+      set new_state_state "changed"
+      incr ::stat_num_state_changed
+      set flip_propagated 1
+    }
+  } else {
+    set new_state_changed "x"
+  }
+
+  if {$flip_propagated} {
+    incr ::stat_num_flip_propagated
+  }
+  # display the result
+  if {$::verbosity >= 2} {
+    set print_str "[time_ns $::now]: \[Fault Injection\] "
+    append print_str "Flipped net [net_print_str $flipped_net] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
+    if {$::check_core_output_modification} {
+      append print_str "Output signals $output_state. "
+    }
+    if {$::check_core_next_state_modification} {
+      append print_str "New state $new_state_state. "
+    }
+    echo $print_str
+  }
+  # Log the result
+  if {$::log_injections} {
+    puts $::injection_log "$::now,$flipped_net,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
+    flush $::injection_log
+  }
+}
+
 ##############################
 #  Fault injection routine   #
 ##############################
 
-proc inject_fault {} {
-  # record the output before the flip
-  set pre_flip_out_val [list]
-  if {$::check_core_output_modification} {
-    foreach net $::output_netlist {
-      lappend pre_flip_out_val [examine $net]
-    }
-  }
-  # record the new state before the flip
-  set pre_flip_next_state_val [list]
-  if {$::check_core_next_state_modification} {
-    foreach net $::next_state_netlist {
-      lappend pre_flip_next_state_val [examine $net]
-    }
-  }
+proc inject_fault {include_in_statistics} {
+  # If enabled, prepare the statistics for the flip
+  if {$include_in_statistics} { fault_injection_pre_flip_statistics }
 
   # Questa currently has a bug that it won't force certain nets. So we retry
   # until we successfully flip a net.
@@ -556,66 +746,16 @@ proc inject_fault {} {
       }
     }
   }
-  if {$success} {
-    incr ::stat_num_bitflips
-    set ::last_flipped_net $net_to_flip
-
-    set flip_propagated 0
-    # record the output after the flip
-    set post_flip_out_val [list]
-    if {$::check_core_output_modification} {
-      foreach net $::output_netlist {
-        lappend post_flip_out_val [examine $net]
-      }
-      # check if the output changed
-      set output_state "not modified"
-      set output_changed [expr ![string equal $pre_flip_out_val $post_flip_out_val]]
-      if {$output_changed} {
-        set output_state "changed"
-        incr ::stat_num_outputs_changed
-        set flip_propagated 1
-      }
-    } else {
-      set output_changed "x"
-    }
-    # record the new state before the flip
-    set post_flip_next_state_val [list]
-    if {$::check_core_next_state_modification} {
-      foreach net $::next_state_netlist {
-        lappend post_flip_next_state_val [examine $net]
-      }
-      # check if the new state changed
-      set new_state_state "not modified"
-      set new_state_changed [expr ![string equal $pre_flip_next_state_val $post_flip_next_state_val]]
-      if {$new_state_changed} {
-        set new_state_state "changed"
-        incr ::stat_num_state_changed
-        set flip_propagated 1
-      }
-    } else {
-      set new_state_changed "x"
-    }
-
-    if {$flip_propagated} {
-      incr ::stat_num_flip_propagated
-    }
-    # display the result
+  if {$success && !$include_in_statistics} {
     if {$::verbosity >= 2} {
-      set print_str "[time_ns $::now]: \[Fault Injection\] "
-      append print_str "Flipped net [net_print_str $net_to_flip] from [lindex $flip_return 1] to [lindex $flip_return 2]. "
-      if {$::check_core_output_modification} {
-        append print_str "Output signals $output_state. "
-      }
-      if {$::check_core_next_state_modification} {
-        append print_str "New state $new_state_state. "
-      }
-      echo $print_str
+      echo "[time_ns $::now]: \[Fault Injection\] \
+            Flipped net [net_print_str $net_to_flip] \
+            from [lindex $flip_return 1] \
+            to [lindex $flip_return 2]. "
     }
-    # Log the result
-    if {$::log_injections} {
-      puts $::injection_log "$::now,$net_to_flip,[lindex $flip_return 1],[lindex $flip_return 2],$output_changed,$new_state_changed"
-      flush $::injection_log
-    }
+  }
+  if {$success && $include_in_statistics} {
+    fault_injection_post_flip_statistics $net_to_flip $flip_return
   }
 }
 
@@ -631,7 +771,8 @@ proc ::inject_trigger {} {
     if {$::verbosity >= 2} {
       echo "\[Fault Injection\] Injection limit ($::max_num_fault_inject) reached. Stopping error injection..."
     }
-    ::stop_fault_injection
+    # Disable the trigger (if not already done so)
+    catch {nowhen inject_fault}
     return
   }
   # increase prescaler
@@ -639,7 +780,7 @@ proc ::inject_trigger {} {
   if {$::prescaler == $::fault_period} {
     set ::prescaler 0
     # inject a fault
-    ::inject_fault
+    ::inject_fault 1
   }
 }
 

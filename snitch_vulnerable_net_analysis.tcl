@@ -4,7 +4,7 @@
 #
 # Author: Luca Rufer (lrufer@student.ethz.ch)
 
-# This script configures and runs the vulnerability analysis for the snitch core
+# This script configures and runs the vulnerable net analysis for the snitch core
 
 # Disable transcript
 transcript quietly
@@ -16,16 +16,16 @@ source ../scripts/fault_injection/snitch_extract_nets.tcl
 
 set target_cores {{0 0 0} {0 0 1}}
 
-# === Configure the settings for the vulnerability analysis ===
+# === Configure the settings for the vulnerable net analysis ===
 
 # General
 set ::verbosity 2
-#set ::initial_run_script "../scripts/questa/run.tcl"
+set ::initial_run_script "../scripts/questa/run.tcl"
 set ::script_base_path "../scripts/fault_injection/"
 
-# Vulnerability Analysis
+# Vulnerabile Net Analysis
 set ::initial_seed    12345
-set ::max_num_tests       1
+set ::max_num_tests      20
 set ::internal_state [list]
 
 foreach target $target_cores {
@@ -37,25 +37,17 @@ foreach target $target_cores {
   set ::internal_state [concat $::internal_state $all_states]
 }
 
-set earliest_injection_time 634000
-set latest_injection_time   -10000
-
 # Termination Monitor Signals
 
 set ::correct_termination_signal   "/mempool_tb/terminated_no_error"
 set ::incorrect_termination_signal "/mempool_tb/terminated_error"
 set ::exception_termination_signal "/mempool_tb/terminated_exception"
 
-# Manual Mode Settings
-
-set ::show_waves          0
-set ::show_fault_in_waves 0
-
 # == Configure the settings for the fault injection script
 
 # General Settings
 set ::verbosity $::verbosity
-set ::log_injections 0
+set ::log_injections 1
 set ::seed $::initial_seed
 set ::print_statistics 0
 
@@ -93,19 +85,16 @@ foreach target $::target_cores {
   foreach {group tile core} $target {}
   set ::assertion_disable_list [concat $::assertion_disable_list [::get_snitch_assertions $group $tile $core]]
   if {$inject_registers} {
-    set state_netlist [get_snitch_state_netlist $group $tile $core]
-    set regfile_mem_netlist [get_snitch_regfile_mem_netlist $group $tile $core]
-    set lsu_state_netlist [get_snitch_lsu_state_netlist $group $tile $core]
-    set ::inject_register_netlist [concat $::inject_register_netlist $state_netlist $regfile_mem_netlist $lsu_state_netlist]
+    set ::inject_register_netlist [concat $::inject_register_netlist [::get_snitch_all_protected_reg_netlist $group $tile $core]]
   }
   if {$inject_combinatorial_logic} {
     set ::inject_signals_netlist [concat $::inject_signals_netlist [::get_all_core_nets $group $tile $core]]
   }
 }
 
-# Finally, source the vulnerability analysis
+# Finally, source the vulnerable net analysis
 
-source ${::script_base_path}vulnerability_analysis.tcl
+source ${::script_base_path}vulnerable_net_analysis.tcl
 
 # Quit
 quit

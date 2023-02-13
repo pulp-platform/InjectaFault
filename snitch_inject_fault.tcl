@@ -26,6 +26,9 @@ set injection_clock_trigger      0
 set fault_period                10
 set rand_initial_injection_phase 0
 set max_num_fault_inject         0
+set forced_injection_times   [list]
+set forced_injection_signals [list]
+set include_forced_inj_in_stats  0
 set signal_fault_duration        2ns
 set register_fault_duration      0ns
 
@@ -43,11 +46,11 @@ set use_bitwidth_as_weight             1
 set target_cores {{0 0 0} {0 0 1}}
 
 # == Select where to inject faults
-set inject_protected_states 1
+set inject_protected_states 0
 set inject_unprotected_states 0
-set inject_protected_regfile 1
+set inject_protected_regfile 0
 set inject_unprotected_regfile 0
-set inject_protected_lsu 1
+set inject_protected_lsu 0
 set inject_unprotected_lsu 0
 set inject_protected_csr 0
 set inject_unprotected_csr 0
@@ -58,7 +61,7 @@ set inject_combinatorial_logic 1
 ######################
 
 # Import Netlist procs
-source ../scripts/fault_injection/extract_snitch_nets.tcl
+source ../scripts/fault_injection/snitch_extract_nets.tcl
 
 set next_state_netlist     [list]
 set output_netlist         [list]
@@ -76,35 +79,6 @@ foreach target $target_cores {
 # leave empty {} to generate the netlist according to the settings above
 set force_register_netlist [list]
 set force_signals_netlist [list]
-
-
-# Force some sets
-#set force_signals_netlist [list \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/push_id \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/pop_id \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/id_table_push \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/id_table_pop \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/push_metadata \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/metadata_we \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/push_id \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/pop_id \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/id_table_push \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/id_table_pop \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/push_metadata \
-[base_path 0 0 1]/gen_DMR_lsu/i_snitch_lsu/metadata_we \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_error \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wen_error \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/dmr_error_o \
-]
-
-#[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[0\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[1\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[2\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[3\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[4\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[5\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[6\] \
-[base_path 0 0 0]/gen_DMR_lsu/i_snitch_lsu/gen_meta_write/i_write_mux/wdata_expanded\[7\] \
 
 set inject_register_netlist $force_register_netlist
 set inject_signals_netlist $force_signals_netlist
