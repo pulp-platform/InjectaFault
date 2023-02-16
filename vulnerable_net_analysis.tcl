@@ -219,11 +219,13 @@ proc injection_termination_report {id} {
 
   # Check if the current seed has finished testing
   set finished_seed 0
-  if {($id == 0 && $::max_num_fault_inject == 0) ||\
-      ($::stat_num_bitflips == 1)} {
+  if {$id == 0 && $::max_num_fault_inject == 0} {
     # Simulation ended first try or first flip caused a problem
     set finished_seed 1
     set log_string "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
+  } elseif { $::stat_num_bitflips == 1} {
+    # the first flip caused a problem
+    set finished_seed 1
   } else {
     # Simulation fault source not determined yet. Run bisection.
     # Test if first bisection step
@@ -282,6 +284,8 @@ proc injection_termination_report {id} {
 
     # Continue with the next seed and reset the bisection parameters
     incr ::seed
+    expr srand($::seed)
+    
     reset_bisection
 
   } else {
@@ -301,7 +305,8 @@ proc injection_termination_report {id} {
 
 # Create the log file
 set time_stamp [exec date +%Y%m%d_%H%M%S]
-set ::vulnerable_net_log [open "vulnerable_net_$time_stamp.log" w+]
+set file_name "vulnerable_net_$time_stamp.log"
+set ::vulnerable_net_log [open $file_name w+]
 puts $::vulnerable_net_log "seed,termination_cause,num_faults_injected,last_injected_net_name"
 
 # Create the monitor triggered variable
@@ -366,7 +371,7 @@ while {$::seed < $::initial_seed + $::max_num_tests} {
   restart_fault_injection
 
   # Run the simulation
-  run -all; run -all
+  while {[eqTime $now 0]} {run -all}
 
   # --- Wait for the simulation to finish ---
 

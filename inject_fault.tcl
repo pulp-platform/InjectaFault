@@ -24,6 +24,10 @@
 #                       0 : Disable logging (Default)
 #                       1 : Enable logging
 # 'seed'              : Set the seed for the number generator. Default: 12345
+#                       To reset the seed and start samping numbers from the
+#                       start of the seed, it is in the responsibility of the
+#                       user to call 'srand'. This is only done one in this
+#                       script when it's sourced.
 # 'print_statistics'  : Print statistics about the fault injections at the end
 #                       of the fault injection. Which statistics are printed
 #                       also depends on other settings below.
@@ -227,9 +231,6 @@ proc restart_fault_injection {} {
       catch {nowhen $l}
     }
   }
-
-  # Set the seed
-  expr srand($::seed)
 
   # Last net that was flipped
   set ::last_flipped_net ""
@@ -783,6 +784,9 @@ proc ::inject_trigger {} {
     ::inject_fault 1
   }
 }
+
+# Set the seed for the first time
+expr srand($::seed)
 
 # Update the inject netlist
 updated_inject_netlist
