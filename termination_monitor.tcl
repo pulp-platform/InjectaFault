@@ -98,7 +98,7 @@ if {![info exists ::termination_post_report_proc]} { set ::termination_post_repo
 #  Finish setup depending on settings  #
 ########################################
 
-set ::termination_timeout_regex "\\s*\\d+\\s*(hr|min|sec|ms|us|ns|ps|fs)?\\s*"
+set ::termination_timeout_regex "\\s*@?\\s*\\d+\\s*(hr|min|sec|ms|us|ns|ps|fs)?\\s*"
 
 set ::termination_active_monitors [list]
 

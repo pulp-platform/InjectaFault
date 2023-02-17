@@ -11,7 +11,9 @@
 source ../scripts/fault_injection/extract_nets.tcl
 
 # == Base Path of a Snitch Core ==
-proc base_path {group tile core} {return "/mempool_tb/dut/i_mempool_cluster/gen_groups\[$group\]/i_group/gen_tiles\[$tile\]/i_tile/gen_cores\[$core\]/gen_mempool_cc/riscv_core/i_snitch"}
+proc group_path {group} {return "/mempool_tb/dut/i_mempool_cluster/gen_groups\[$group\]/i_group"}
+proc tile_path {group tile} {return "[group_path $group]/gen_tiles\[$tile\]/i_tile"}
+proc base_path {group tile core} {return "[tile_path $group $tile]/gen_cores\[$core\]/gen_mempool_cc/riscv_core/i_snitch"}
 
 # == Determine the snitch core parameters ==
 set is_dmr_enabled [examine -radix dec /snitch_dmr_pkg::DualModularRedundancy]

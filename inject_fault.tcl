@@ -90,8 +90,8 @@
 # 'include_forced_inj_in_stats' : Select wether the forced injections should be
 #                       included in the statistics or not. Including them in the
 #                       statistics will also cause them to be logged (if logging
-#                       is enabled) and variables like 'last_flipped_net' to be
-#                       changed.
+#                       is enabled) and variables like 'last_flipped_net' and
+#                       'last_injection_time' to be changed.
 #                       0: Don't include forced injections in statistics and
 #                          logs (default).
 #                       1: Include forced injections in statistics and logs.
@@ -234,6 +234,7 @@ proc restart_fault_injection {} {
 
   # Last net that was flipped
   set ::last_flipped_net ""
+  set ::last_injection_time -1
 
   # Open the log file
   if {$::log_injections} {
@@ -270,14 +271,14 @@ proc restart_fault_injection {} {
   # Create all When statements
 
   # start fault injection
-  when -label inject_start "\$now == $start_time" {
+  when -label inject_start "\$now == @$start_time" {
     ::start_fault_injection
     nowhen inject_start
   }
 
   # periodically inject faults
   if {![string equal $::injection_clock ""]} {
-    when -label inject_fault "\$now >= $::inject_start_time and $::injection_clock == $::injection_clock_trigger" {
+    when -label inject_fault "\$now >= @$::inject_start_time and $::injection_clock == $::injection_clock_trigger" {
       ::inject_trigger
     }
   }
@@ -301,14 +302,14 @@ proc restart_fault_injection {} {
       }
     }
     # Create the when statement to flip the bit
-    when -label $label "\$now == $t" "$cmd"
+    when -label $label "\$now == @$t" "$cmd"
     # Store the label
     lappend ::forced_injection_when_labels $label
   }
 
   # stop the simulation and output statistics
   if {$stop_time != 0} {
-    when -label inject_stop "\$now >= $stop_time" {
+    when -label inject_stop "\$now > @$stop_time" {
       ::stop_fault_injection
       nowhen inject_stop
     }
@@ -640,6 +641,7 @@ proc fault_injection_pre_flip_statistics {} {
 proc fault_injection_post_flip_statistics {flipped_net flip_return} {
   incr ::stat_num_bitflips
   set ::last_flipped_net $flipped_net
+  set ::last_injection_time $::now
 
   set flip_propagated 0
   # record the output after the flip

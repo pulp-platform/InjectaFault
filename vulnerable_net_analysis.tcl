@@ -63,12 +63,11 @@
 #                       2 : Important information and termination status of
 #                           the running programm (Recommended). Default
 #                       3 : All information that is possible
-# 'initial_run_script' : Script (including path) to be sourced before the
+# 'initial_run_proc' :  User-defined procedure to be sourced before the
 #                       execution of the golden model. The script should end
 #                       with some form of the 'run' command to start running
 #                       the simulation. If this setting is not provided by the
-#                       user, or it is an empty string, then this script simply
-#                       executes 'run -all'
+#                       user, then this script simply executes 'run -all'
 # 'script_base_path'  : Base path of all the scripts that are sourced here:
 #                        - termination_monitor.tcl
 #                        - inject_fault.tcl
@@ -105,10 +104,12 @@
 #  Set default parameter values  #
 ##################################
 
+proc run_all {} {run -all}
+
 # General
-if {![info exists ::verbosity]}          { set ::verbosity             2 }
-if {![info exists ::initial_run_script]} { set ::initial_run_script   "" }
-if {![info exists ::script_base_path]}   { set ::script_base_path   "./" }
+if {![info exists ::verbosity]}        { set ::verbosity              2 }
+if {![info exists ::initial_run_proc]} { set ::initial_run_proc run_all }
+if {![info exists ::script_base_path]} { set ::script_base_path    "./" }
 
 # Vulnerabile Net Analysis
 if {![info exists ::initial_seed]}   { set ::initial_seed    12345 }
@@ -135,6 +136,53 @@ proc reset_bisection {} {
 
   # Remove the limit to the number of injected faults.
   set ::max_num_fault_inject 0
+}
+
+proc create_comparison {} {
+  # Compare the simulation to the golden model
+  if {$::verbosity >= 2} {
+    echo "\[Vulnerable Net Analysis\] Creating compare to golden model."
+  }
+
+  # open golden dataset if not already open
+  if {[lsearch [dataset list] gold] == -1} {
+    dataset open gold.wlf gold
+  }
+
+  # Compare
+  compare start -maxsignal 1000 -maxtotal 10000 gold
+  compare add -r -nowin /*
+  compare run $::last_injection_time
+
+  # Add all waves
+  if {$::verbosity >= 2} {
+    echo "\[Vulnerable Net Analysis\] Adding all comparison waves."
+  }
+  set all_signals [find signals -r compare:*]
+  foreach sig $all_signals {
+    set last_path_sep_index [string last "/" $sig]
+    # Extract the signal path and signal name
+    set sig_path [string range $sig 0 [expr $last_path_sep_index - 1]]
+    set sig_name [string range $sig [expr $last_path_sep_index +2] end-1]
+    # Fix the strings from the chars introduced by the comparison
+    set sig_path [string map {"/\[/" "\\\[" "/\]/" "\\\]/"} $sig_path]
+    set sig_name [lindex [split $sig_name "<>"] 0]
+    set sig [string map {"\\" "\\\\" "\[" "\\\[" "\]" "\\\]"} $sig]
+    # Split the signal path into multiple groups
+    set groups [split $sig_path "/"]
+    # Create the wave command
+    set cmd "add wave "
+    foreach g $groups { if {[string length $g] != 0} { append cmd "-group \"$g\" "}}
+    append cmd "-label $sig_name compare:$sig"
+    # Add the wave
+    eval $cmd
+  }
+
+  # try to move the cursor to the injection time and focus the wave window there
+  catch {
+    set cursor_id [wave cursor add -time $::last_injection_time -name "Injection Time" -lock 1]
+    wave cursor see $cursor_id -at 50
+  }
 }
 
 ######################################
@@ -220,11 +268,7 @@ proc injection_termination_report {id} {
   # Check if the current seed has finished testing
   set finished_seed 0
   if {$id == 0 && $::max_num_fault_inject == 0} {
-    # Simulation ended first try or first flip caused a problem
-    set finished_seed 1
-    set log_string "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
-  } elseif { $::stat_num_bitflips == 1} {
-    # the first flip caused a problem
+    # Simulation ended first try
     set finished_seed 1
   } else {
     # Simulation fault source not determined yet. Run bisection.
@@ -238,11 +282,9 @@ proc injection_termination_report {id} {
       # Check if bisection was successful
       if {$::stat_num_bitflips == $::bisect_low} {
         if {$id == 0} {
-          # Bisection successful, continue with next seed
-          set finished_seed 1
-          set log_string $::last_failing_log_string
+          # Run the simulation again with the higher boundary to re-create the fault
         } else {
-          # Bisection failed, another error exists at a lower position
+          # Bisection failed, another error exists at a lower position that was not detected before
           set ::bisect_low 0
         }
       } else {
@@ -250,7 +292,8 @@ proc injection_termination_report {id} {
           # This should not be happening, something failed
           echo "\[Vulnerabile Net Analysis\] Bisection failed. This should not be happening..."
         } else {
-          # Run the simulation again with the lower boundary to make sure everything is ok.
+          # Found the first injection position that causes a fault
+          set finished_seed 1
         }
       }
     } else {
@@ -264,17 +307,9 @@ proc injection_termination_report {id} {
     }
   }
 
-  # record a log string if simulation terminated non-correctly
-  if {$id != 0} {
-    set ::last_failing_log_string "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
-  }
-
-  # calulate the next bisection step
-  set ::max_num_fault_inject [expr ($::bisect_low + $::bisect_high) / 2]
-
   if {$finished_seed} {
     # Log the results
-    puts $::vulnerable_net_log $log_string
+    puts $::vulnerable_net_log "$::seed,$id,$::stat_num_bitflips,$::last_flipped_net"
     flush $::vulnerable_net_log
 
     # Print the results
@@ -282,13 +317,21 @@ proc injection_termination_report {id} {
       echo "\[Vulnerabile Net Analysis\] Finished Testing Seed: $::seed."
     }
 
+    # Check if a vulnerable net was found in this simulation
+    if {$::max_num_fault_inject != 0} {
+      incr ::num_vulnerable_nets_found
+    }
+
     # Continue with the next seed and reset the bisection parameters
     incr ::seed
     expr srand($::seed)
-    
+
     reset_bisection
 
   } else {
+    # calulate the next bisection step (middle of the low and high boundary, ceiled)
+    set ::max_num_fault_inject [expr ($::bisect_low + $::bisect_high + 1) / 2]
+
     if {$::verbosity >= 2} {
       echo "\[Vulnerabile Net Analysis\] Bisection Info: \
         Seed: $::seed, Lower Bound: $::bisect_low, Upper Bound: $::bisect_high, \
@@ -297,6 +340,87 @@ proc injection_termination_report {id} {
   }
   # Indicate that the monitor was triggered (helps to rule out assertions)
   set ::monitor_triggered 1
+}
+
+##################################
+#  Vulnerable Net Analysis Round #
+##################################
+
+proc vulnerable_net_analysis_fault_round {} {
+  if {![catch { compare list }]} {
+    delete wave *
+    compare end
+  }
+  set ::simulation_stop_requested 0
+
+  # Restart the simulation
+  if {$::verbosity >= 1} {
+    echo "\[Vulnerabile Net Analysis\] Reached End of simulation. Restarting..."
+  }
+
+  # Restore the simulation to startup
+  restore $::checkpoint_name
+
+  # Reset the RNG
+  expr srand($::seed)
+
+  # Restart the fault injection script
+  restart_fault_injection
+
+  # Restart the termination monitors
+  termination_reset_monitors
+
+  # Run the simulation
+  while {[eqTime $::now $::inject_start_time]} {run -all}
+
+  # --- Wait for the simulation to finish ---
+
+  # Make sure the stop was triggered by a monitor, otherwise end the script
+  # and let the user take over
+  if {!$::monitor_triggered} {
+    if {$::verbosity >= 1} {
+      echo "\[Vulnerable Net Analysis\] Simulation stop requested. Finishing up..."
+    }
+    set ::simulation_stop_requested 1
+  }
+  set ::monitor_triggered 0
+}
+
+proc vulnerable_net_analysis_run_full_round {} {
+  if {![catch { compare list }]} {
+    delete wave *
+    compare end
+  }
+
+  set ::simulation_stop_requested 0
+  set current_round_seed $::seed
+  # Repeat single rounds until the seed changes
+  while {$current_round_seed == $::seed && \
+         !$::simulation_stop_requested} {
+    vulnerable_net_analysis_fault_round
+  }
+}
+
+proc vulnerable_net_analysis_find_next_vulnerable_net {} {
+  if {![catch { compare list }]} {
+    delete wave *
+    compare end
+  }
+  set ::simulation_stop_requested 0
+  set current_num_nets $::num_vulnerable_nets_found
+  # Repeat full rounds until the number of vulnerable nets found changes
+  while {$current_num_nets == $::num_vulnerable_nets_found && \
+         !$::simulation_stop_requested} {
+    vulnerable_net_analysis_run_full_round
+  }
+  # Report the vulnerable net and time
+  if {$::verbosity >= 1} {
+    echo "\[vulnerable Net Analysis\] Found next vulnerable net: \
+          $::last_flipped_net was filpped at time $::last_injection_time."
+  }
+
+  # create the comparison, including waves
+  create_comparison
 }
 
 ###############################################
@@ -311,6 +435,7 @@ puts $::vulnerable_net_log "seed,termination_cause,num_faults_injected,last_inje
 
 # Create the monitor triggered variable
 set ::monitor_triggered 0
+set ::simulation_stop_requested 0
 
 # === Step 1: Configure the golden model ===
 
@@ -329,12 +454,24 @@ set ::termination_report_proc golden_model_termination_report
 # Setup the monitors
 source [subst ${::script_base_path}termination_monitor.tcl]
 
-# Source the run script
-if ([string equal $::initial_run_script ""]) {
-  run -all
-} else {
-  source $::initial_run_script
+# Create the when for checkpointing
+when -label create_checkpoint "\$now == $::inject_start_time " {
+  stop
+  nowhen create_checkpoint
 }
+
+# Run the initial run proc
+$::initial_run_proc
+
+# Create a checkpoint of the simulation
+if {$::verbosity >= 2} {
+  echo "\[Vulnerable Net Analysis\] Creating checkpoint..."
+}
+set ::checkpoint_name "startup.cpt"
+checkpoint $::checkpoint_name
+
+# Finish the golden model
+run -all
 
 # --- wait for the golden model to finish ---
 
@@ -342,45 +479,45 @@ if ([string equal $::initial_run_script ""]) {
 if {!$::monitor_triggered} { exit }
 set ::monitor_triggered 0
 
+# Record the waveforms of the golden model
+dataset save sim gold.wlf
+
 ##########################
 #  Find vulnerable nets  #
 ##########################
+
+# Reset the vulnerable net counter
+set ::num_vulnerable_nets_found 0
 
 # Initialize the bisection
 reset_bisection
 
 # update the termination monitor with an appropriate timeout
 set timeout_monitor [expr round($::golden_model_execution_time * 1.2)]
-lappend ::termination_signal_list [subst {4 $timeout_monitor "Timeout"}]
+lappend ::termination_signal_list [subst {4 "@$timeout_monitor" "Timeout"}]
 set ::termination_report_proc injection_termination_report
-termination_reset_monitors
 
 # Source the fault injection script to start fault injection
 # The parameters for the fault injection script have to be set up by the user.
 source [subst ${::script_base_path}inject_fault.tcl]
 
 # Loop forever
-while {$::seed < $::initial_seed + $::max_num_tests} {
-  # Restart the simulation
-  if {$::verbosity >= 1} {
-    echo "\[Vulnerabile Net Analysis\] Reached End of simulation. Restarting..."
-  }
-  restart -f
-
-  # Restart the fault injection script
-  restart_fault_injection
-
-  # Run the simulation
-  while {[eqTime $now 0]} {run -all}
-
-  # --- Wait for the simulation to finish ---
-
-  # Make sure the stop was triggered by a monitor, otherwise end the script
-  # and let the user take over
-  if {!$::monitor_triggered} { exit }
-  set ::monitor_triggered 0
+for {set i 0} { $i < $::max_num_tests && !$::simulation_stop_requested} { incr i } {
+  vulnerable_net_analysis_run_full_round
 }
 
+set ::simulation_stop_requested 0
+
 if {$::verbosity >= 1} {
-  echo "\[Vulnerabile Net Analysis\] Reached the end of the vulnerable net analysis."
+  echo "\[Vulnerabile Net Analysis\] Reached the end of the automatic \
+          vulnerable net analysis. You can continue manually using any of the \
+          follogwing commands:"
+  echo " - 'vulnerable_net_analysis_fault_round' : run a single simulation with \
+            a single injected fault."
+  echo " - 'vulnerable_net_analysis_run_full_round' : run a full round with the \
+            same seed. Either the simulation terminates first try without \
+            errors, or runs a full bisection until the first flip that causes \
+            an error is found."
+  echo " - 'vulnerable_net_analysis_find_next_vulnerable_net' : run full rounds \
+            until the next vulnerable net is found."
 }
