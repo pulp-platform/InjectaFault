@@ -90,7 +90,18 @@ proc get_record_field_names {signal_name} {
 #  Recursevely extract all nets and enums #
 ###########################################
 
-proc extract_netlists {item_list} {
+# description: recursively extract all nets from the given 'item_list' by
+#              breaking them down into the most fundamental bit vectors.
+#
+#              Set 'injection_save' to 1 to make sure only nets that can be
+#              injected are extracted. Questa SIM has a bug in the 'force'
+#              command: When trying to force a signal in an array inside a
+#              struct (Record), the force command will force the field at array
+#              index 0, and not the selected index. E.g. forcing a.b[7] will
+#              actually force a.b[0]. When 'injection_save' is set to 1,
+#              arrays inside structs are skipped from extraction, and a
+#              info message is generated if the verbosity is high enough
+proc extract_netlists {item_list {injection_save 0}} {
   set extract_list [list]
   foreach item $item_list {
     set item_type [get_net_type $item]
@@ -98,21 +109,27 @@ proc extract_netlists {item_list} {
       lappend extract_list $item
     } elseif { $item_type == "Array"} {
       set array_length [get_net_array_length $item]
-      for {set i 0}  {$i < $array_length} {incr i} {
-        set new_net "$item\[$i\]"
-        set extract_list [concat $extract_list [extract_netlists $new_net]]
+      if {$injection_save && [string first "." $item] != -1} {
+        if { $::verbosity >= 3 } {
+          echo "\[Netlist Extraction\] Net $item is an array inside a struct and will be skipped."
+        }
+      } else {
+        for {set i 0}  {$i < $array_length} {incr i} {
+          set new_net "$item\[$i\]"
+          set extract_list [concat $extract_list [extract_netlists $new_net $injection_save]]
+        }
       }
     } elseif { $item_type == "Record"} {
       set fields [get_record_field_names $item]
       foreach field $fields {
         set new_net $item.$field
-        set extract_list [concat $extract_list [extract_netlists $new_net]]
+        set extract_list [concat $extract_list [extract_netlists $new_net $injection_save]]
       }
     } elseif { $item_type == "int"} {
       # Ignore
     } else {
       if { $::verbosity >= 2 } {
-        echo "\[Fault Injection\] Unknown Type $item_type of net $item. Skipping..."
+        echo "\[Netlist Extraction\] Unknown Type $item_type of net $item. Skipping..."
       }
     }
   }
@@ -127,14 +144,14 @@ proc extract_netlists {item_list} {
 # This is not guaranteed to work for every circuit, as net may not be named
 # according to conventions!
 proc get_state_netlist {base_path} {
-  return [extract_netlists [find signal $base_path/*_q]]
+  return [extract_netlists [find signal $base_path/*_q] 1]
 }
 
 # Example proc on how to extract state nets.
 # This is not guaranteed to work for every circuit, as net may not be named
 # according to conventions!
 proc get_state_netlist_revursive {base_path} {
-  return [extract_netlists [find signal -r $base_path/*_q]]
+  return [extract_netlists [find signal -r $base_path/*_q] 1]
 }
 
 #####################
@@ -193,7 +210,7 @@ proc extract_all_nets_recursive_filtered {base_path filter_list} {
   set netlist_filtered [lsort -dictionary $netlist_filtered]
 
   # recursively extract all nets and enums from arrays and structs
-  set netlist_extracted [extract_netlists $netlist_filtered]
+  set netlist_extracted [extract_netlists $netlist_filtered 1]
 
   return $netlist_extracted
 }

@@ -41,14 +41,26 @@ proc snitch_vulnerable_net_analysis_initial_run_proc {} {
 
 # Vulnerabile Net Analysis
 set ::initial_seed    12345
-set ::max_num_tests      20
+set ::max_num_tests       0
 set ::internal_state [list]
 
 foreach target $target_cores {
   foreach {group tile core} $target {}
+  # Add all states
   set state_netlist [get_snitch_state_netlist $group $tile $core]
-  set regfile_mem_netlist [get_snitch_regfile_mem_netlist $group $tile $core]
-  set lsu_state_netlist [get_snitch_lsu_state_netlist $group $tile $core]
+  # Add saved registers of regfiles (zero, ra, sp, gp, tp, s0-s11, a0, a1)
+  set save_registers { 0 1 2 3 4 \
+                       8 9 18 19 20 21 22 23 24 25 26 27 \
+                       10 11 }
+  set regfile_mem_netlist [list]
+  foreach r $save_registers {
+    set mem_path [regfile_path $group $tile $core]/mem\[$r\]
+    lappend regfile_mem_netlist $mem_path
+  }
+  # Add ID available of LSU.
+  # As all IDs should be available after termination, metadata is irrelevant.
+  set lsu_state_netlist [lsu_id_path $group $tile $core]
+  # Combine all lists
   set all_states [concat $state_netlist $regfile_mem_netlist $lsu_state_netlist]
   set ::internal_state [concat $::internal_state $all_states]
 }
@@ -111,6 +123,9 @@ foreach target $::target_cores {
 # Finally, source the vulnerable net analysis
 
 source ${::script_base_path}vulnerable_net_analysis.tcl
+
+# Automatically find the first vulnerable net
+vulnerable_net_analysis_find_next_vulnerable_net
 
 # Quit
 quit

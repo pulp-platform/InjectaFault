@@ -138,53 +138,6 @@ proc reset_bisection {} {
   set ::max_num_fault_inject 0
 }
 
-proc create_comparison {} {
-  # Compare the simulation to the golden model
-  if {$::verbosity >= 2} {
-    echo "\[Vulnerable Net Analysis\] Creating compare to golden model."
-  }
-
-  # open golden dataset if not already open
-  if {[lsearch [dataset list] gold] == -1} {
-    dataset open gold.wlf gold
-  }
-
-  # Compare
-  compare start -maxsignal 1000 -maxtotal 10000 gold
-  compare add -r -nowin /*
-  compare run $::last_injection_time
-
-  # Add all waves
-  if {$::verbosity >= 2} {
-    echo "\[Vulnerable Net Analysis\] Adding all comparison waves."
-  }
-  set all_signals [find signals -r compare:*]
-  foreach sig $all_signals {
-    set last_path_sep_index [string last "/" $sig]
-    # Extract the signal path and signal name
-    set sig_path [string range $sig 0 [expr $last_path_sep_index - 1]]
-    set sig_name [string range $sig [expr $last_path_sep_index +2] end-1]
-    # Fix the strings from the chars introduced by the comparison
-    set sig_path [string map {"/\[/" "\\\[" "/\]/" "\\\]/"} $sig_path]
-    set sig_name [lindex [split $sig_name "<>"] 0]
-    set sig [string map {"\\" "\\\\" "\[" "\\\[" "\]" "\\\]"} $sig]
-    # Split the signal path into multiple groups
-    set groups [split $sig_path "/"]
-    # Create the wave command
-    set cmd "add wave "
-    foreach g $groups { if {[string length $g] != 0} { append cmd "-group \"$g\" "}}
-    append cmd "-label $sig_name compare:$sig"
-    # Add the wave
-    eval $cmd
-  }
-
-  # try to move the cursor to the injection time and focus the wave window there
-  catch {
-    set cursor_id [wave cursor add -time $::last_injection_time -name "Injection Time" -lock 1]
-    wave cursor see $cursor_id -at 50
-  }
-}
-
 ######################################
 #  Termination monitor return procs  #
 ######################################
@@ -377,11 +330,33 @@ proc vulnerable_net_analysis_fault_round {} {
 
   # Make sure the stop was triggered by a monitor, otherwise end the script
   # and let the user take over
-  if {!$::monitor_triggered} {
-    if {$::verbosity >= 1} {
-      echo "\[Vulnerable Net Analysis\] Simulation stop requested. Finishing up..."
+  set while_itr 0
+  while {!($::monitor_triggered || $::simulation_stop_requested)} {
+    # Check the run status and stop cause
+    set run_status [runStatus -full]
+    if {[string first "finish" $run_status] != -1} {
+      # Hit a 'finish' in the testbench
+      if {$::verbosity >= 1} {
+        echo "\[Vulnerable Net Analysis\] Detected a 'finish' in the\
+              simulation before a termination monitor was triggered. The\
+              finish command will be ignored. Consider disabling the finish\
+              in the testbench for this simulation..."
+      }
+      # Ignore finish and continue
+      run -continue
+    } elseif {[string first "end" $run_status] != -1} {
+      if {$::verbosity >= 1} {
+        echo "\[Vulnerable Net Analysis\] Simulation stop requested.\
+              Execute 'run -continue' finish the current simulation."
+      }
+      set ::simulation_stop_requested 1
+    } else {
+      if {$::verbosity >= 1} {
+        echo "\[Vulnerable Net Analysis\] Simulation stop requested.\
+              Unknown stop reason: $run_status. Exiting..."
+      }
+      quit -code 1
     }
-    set ::simulation_stop_requested 1
   }
   set ::monitor_triggered 0
 }
@@ -419,8 +394,13 @@ proc vulnerable_net_analysis_find_next_vulnerable_net {} {
           $::last_flipped_net was filpped at time $::last_injection_time."
   }
 
-  # create the comparison, including waves
-  create_comparison
+  # Compare the simulation to the golden model
+  if {$::verbosity >= 2} {
+    echo "\[Vulnerable Net Analysis\] Creating comparison to golden model."
+  }
+
+  # Create the comparison, including waves
+  create_comparison "sim" $::last_injection_time
 }
 
 ###############################################
@@ -476,7 +456,13 @@ run -all
 # --- wait for the golden model to finish ---
 
 # check that the stop after the run was triggered by a monitor
-if {!$::monitor_triggered} { exit }
+while {!$::monitor_triggered} {
+  if {$::verbosity >= 1} {
+    echo "\[Vulnerable Net Analysis\] Simulation stop requested. \
+      Simulation may no be paused during golden model execution. Continuing..."
+  }
+  run -continue
+}
 set ::monitor_triggered 0
 
 # Record the waveforms of the golden model
@@ -500,6 +486,11 @@ set ::termination_report_proc injection_termination_report
 # Source the fault injection script to start fault injection
 # The parameters for the fault injection script have to be set up by the user.
 source [subst ${::script_base_path}inject_fault.tcl]
+
+# Source the comparison script
+set ::comparison_file_list      [list]
+set ::comparison_files_wildcard [list]
+source [subst ${::script_base_path}comparison.tcl]
 
 # Loop forever
 for {set i 0} { $i < $::max_num_tests && !$::simulation_stop_requested} { incr i } {

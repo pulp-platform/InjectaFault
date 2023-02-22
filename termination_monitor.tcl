@@ -204,7 +204,7 @@ proc termination_reset_monitors {} {
       if {$::termination_report_x_as_id == -1} {
         set term_condition "$signal_path == 1"
       } else {
-        set term_condition "$signal_path != 0"
+        set term_condition "$signal_path != 0 && \$now > 0"
       }
     }
 

@@ -17,7 +17,36 @@ proc base_path {group tile core} {return "[tile_path $group $tile]/gen_cores\[$c
 
 # == Determine the snitch core parameters ==
 set is_dmr_enabled [examine -radix dec /snitch_dmr_pkg::DualModularRedundancy]
-set is_ecc_enabled [examine -radix binary [base_path 0 0 0]/EnableECCReg]
+proc is_ecc_enabled {group tile core} {return [examine -radix binary [base_path $group $tile $core]/EnableECCReg]}
+
+# == Core internal paths ==
+proc regfile_path {group tile core} {
+  set base [base_path $group $tile $core]
+  if {$::is_dmr_enabled}                         { return $base/gen_dmr_regfile/i_snitch_regfile
+  } elseif {[is_ecc_enabled $group $tile $core]} { return $base/gen_regfile/ECC/i_snitch_regfile
+  } else                                         { return $base/gen_regfile/noECC/i_snitch_regfile
+  }
+}
+
+proc lsu_path {group tile core} {
+  set base [base_path $group $tile $core]
+  if {$::is_dmr_enabled} { return $base/gen_DMR_lsu/i_snitch_lsu }
+  else                   { return $base/gen_lsu/i_snitch_lsu }
+}
+
+proc lsu_id_path {group tile core} {
+  set base [lsu_path $group $tile $core]
+  if {$::is_dmr_enabled} {
+    if {[lsu_is_dmr_master $group $tile $core]}    { return $base/mst_state/i_id/data_q
+    } elseif {[is_ecc_enabled $group $tile $core]} { return $base/slv_state/ECC/i_id/data_q
+    } else                                         { return $base/id_available_q
+    }
+  } else {
+    if {[is_ecc_enabled $group $tile $core]}       { return $base/ECC/i_id/data_q
+    } else                                         { return $base/id_available_q
+    }
+  }
+}
 
 # == Nets to ignore for transient bit flips ==
 # nets used for debugging
@@ -27,7 +56,11 @@ lappend core_netlist_ignore *clk_i
 lappend core_netlist_ignore *rst_ni
 lappend core_netlist_ignore *rst_i
 lappend core_netlist_ignore *rst
-lappend core_netlist_ignore *dmr*
+if {!$is_dmr_enabled} {
+  lappend core_netlist_ignore *dmr*
+  lappend core_netlist_ignore *slv*
+  lappend core_netlist_ignore *mst*
+}
 # registers/memories
 lappend core_netlist_ignore *mem
 lappend core_netlist_ignore *_q
@@ -50,7 +83,7 @@ proc get_snitch_protected_master_state_netlist {group tile core} {
     lappend netlist $base/DMR_state/mst/i_wfi/data_q
     lappend netlist $base/DMR_state/mst/i_wake_up/data_q
     lappend netlist $base/DMR_state/mst/i_sb/data_q
-  } elseif {$::is_ecc_enabled} {
+  } elseif {[is_ecc_enabled $group $tile $core]} {
     lappend netlist $base/state/TMR/i_pc/data_q
     lappend netlist $base/state/TMR/i_wfi/data_q
     lappend netlist $base/state/TMR/i_wake_up/data_q
@@ -66,7 +99,7 @@ proc get_snitch_protected_slave_state_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
   # Snitch state
-  if {$::is_ecc_enabled} {
+  if {[is_ecc_enabled $group $tile $core]} {
     if {$::is_dmr_enabled} {
       lappend netlist $base/DMR_state/slv/TMR/i_pc/data_q
       lappend netlist $base/DMR_state/slv/TMR/i_wfi/data_q
@@ -89,7 +122,7 @@ proc get_snitch_unprotected_master_state_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
   # Snitch state
-  if {!$::is_dmr_enabled && !$::is_ecc_enabled} {
+  if {!$::is_dmr_enabled && ![is_ecc_enabled $group $tile $core]} {
     lappend netlist $base/pc_q
     lappend netlist $base/wfi_q
     lappend netlist $base/wake_up_q
@@ -105,7 +138,7 @@ proc get_snitch_unprotected_slave_state_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
   # Snitch state
-  if {!$::is_ecc_enabled} {
+  if {![is_ecc_enabled $group $tile $core]} {
     if {$::is_dmr_enabled} {
       lappend netlist $base/DMR_state/slv/pc_qq
       lappend netlist $base/DMR_state/slv/wfi_qq
@@ -164,49 +197,22 @@ proc get_snitch_state_netlist {group tile core} {
 }
 
 proc get_snitch_protected_regfile_mem_netlist {group tile core} {
-  set base [base_path $group $tile $core]
+  set base [regfile_path $group $tile $core]
   set netlist [list]
-  if {$core % 2 == 0} {
-    # Protected Master
-    if {$::is_dmr_enabled} {
-      for {set i 0} {$i < 32} {incr i} {
-        lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
-      }
-    } elseif {$::is_ecc_enabled} {
-      for {set i 0} {$i < 32} {incr i} {
-        lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
-      }
-    }
-  } else {
-    # Protected Slave
-    if {$::is_ecc_enabled} {
-      if {$::is_dmr_enabled} {
-        for {set i 0} {$i < 32} {incr i} {
-          lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
-        }
-      } else {
-        for {set i 0} {$i < 32} {incr i} {
-          lappend netlist $base/gen_regfile/ECC/i_snitch_regfile/mem\[$i\]
-        }
-      }
+  if {[is_ecc_enabled $group $tile $core] || ($::is_dmr_enabled && ($core % 2 == 0))} {
+    for {set i 0} {$i < 32} {incr i} {
+      lappend netlist $base/mem\[$i\]
     }
   }
   return $netlist
 }
 
 proc get_snitch_unprotected_regfile_mem_netlist {group tile core} {
-  set base [base_path $group $tile $core]
+  set base [regfile_path $group $tile $core]
   set netlist [list]
-  if {$::is_ecc_enabled || ($core % 2 == 0 && $::is_dmr_enabled)} {return $netlist}
-
-  if {$::is_dmr_enabled && ($core % 2 == 1) && !$::is_ecc_enabled} {
-    for {set i 0} {$i < 32} {incr i} {
-      lappend netlist $base/gen_dmr_regfile/i_snitch_regfile/mem\[$i\]
-    }
-  } else {
-    for {set i 0} {$i < 32} {incr i} {
-      lappend netlist $base/gen_regfile/noECC/i_snitch_regfile/mem\[$i\]
-    }
+  if {[is_ecc_enabled $group $tile $core] || ($core % 2 == 0 && $::is_dmr_enabled)} {return $netlist}
+  for {set i 0} {$i < 32} {incr i} {
+    lappend netlist $base/mem\[$i\]
   }
   return $netlist
 }
@@ -220,60 +226,32 @@ proc get_snitch_regfile_mem_netlist {group tile core} {
 proc lsu_is_dmr_master {group tile core} {
   set is_master 0
   if {$::is_dmr_enabled} {
-    set base [base_path $group $tile $core]/gen_DMR_lsu/i_snitch_lsu
-    set is_master [examine -radix decimal $base/IsDMRMaster]
+    set is_master [examine -radix decimal [lsu_path $group $tile $core]/IsDMRMaster]
   }
   return $is_master
 }
 
 proc get_snitch_protected_lsu_state_netlist {group tile core} {
-  set base [base_path $group $tile $core]
+  set base [lsu_path $group $tile $core]
   set netlist [list]
-  if {$::is_dmr_enabled} {
-    set NumOutstandingLoads [examine -radix decimal $base/gen_DMR_lsu/i_snitch_lsu/NumOutstandingLoads]
-    if {[lsu_is_dmr_master $group $tile $core]} {
-      lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/mst_state/i_id/data_q
-      for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
-      lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/metadata_q\[$i\]
-      }
-    } else {
-      if {$::is_ecc_enabled} {
-        lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/slv_state/ECC/i_id/data_q
-        for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
-          lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/metadata_q\[$i\]
-        }
-      }
-    }
-  } else {
-    set NumOutstandingLoads [examine -radix decimal $base/gen_lsu/i_snitch_lsu/NumOutstandingLoads]
-    if {$::is_ecc_enabled} {
-      lappend netlist $base/gen_lsu/i_snitch_lsu/ECC/i_id/data_q
-      for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
-        lappend netlist $base/gen_lsu/i_snitch_lsu/metadata_q\[$i\]
-      }
+  set NumOutstandingLoads [examine -radix decimal $base/NumOutstandingLoads]
+  if {[is_ecc_enabled $group $tile $core] || ($::is_dmr_enabled && [lsu_is_dmr_master $group $tile $core])} {
+    lappend netlist [lsu_id_path $group $tile $core]
+    for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
+      lappend netlist $base/metadata_q\[$i\]
     }
   }
-
   return $netlist
 }
 
 proc get_snitch_unprotected_lsu_state_netlist {group tile core} {
-  set base [base_path $group $tile $core]
+  set base [lsu_path $group $tile $core]
   set netlist [list]
-  # LSU state
-  if {$::is_dmr_enabled} {
-    set NumOutstandingLoads [examine -radix decimal $base/gen_DMR_lsu/i_snitch_lsu/NumOutstandingLoads]
-    if {![lsu_is_dmr_master $group $tile $core] && !$::is_ecc_enabled} {
-      lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/id_available_q
-      for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
-        lappend netlist $base/gen_DMR_lsu/i_snitch_lsu/metadata_q\[$i\]
-      }
-    }
-  } else {
-    set NumOutstandingLoads [examine -radix decimal $base/gen_lsu/i_snitch_lsu/NumOutstandingLoads]
-    if {!$::is_ecc_enabled} {
-      set lsu_netlist [find signal $base/gen_lsu/i_snitch_lsu/*_q]
-      set netlist [concat $netlist $lsu_netlist]
+  set NumOutstandingLoads [examine -radix decimal $base/NumOutstandingLoads]
+  if {![is_ecc_enabled $group $tile $core] && !($::is_dmr_enabled && [lsu_is_dmr_master $group $tile $core])} {
+    lappend netlist [lsu_id_path $group $tile $core]
+    for {set i 0} {$i < $NumOutstandingLoads} {incr i} {
+      lappend netlist $base/metadata_q\[$i\]
     }
   }
   return $netlist
@@ -288,7 +266,7 @@ proc get_snitch_lsu_state_netlist {group tile core} {
 proc get_snitch_protected_csr_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
-  if {$::is_ecc_enabled} {
+  if {[is_ecc_enabled $group $tile $core]} {
     lappend netlist $base/csr_mhpm_parity_q
     lappend netlist $base/csr_mhpmh_parity_q
     lappend netlist $base/csr_mhpm_valid_q
@@ -309,7 +287,7 @@ proc get_snitch_protected_csr_netlist {group tile core} {
 proc get_snitch_unprotected_csr_netlist {group tile core} {
   set base [base_path $group $tile $core]
   set netlist [list]
-  if {!$::is_ecc_enabled} {
+  if {![is_ecc_enabled $group $tile $core]} {
     lappend netlist $base/csr_mhpm_valid_q
     lappend netlist $base/csr_mhpmh_valid_q
     lappend netlist $base/cycle_q
