@@ -33,6 +33,8 @@
 #                       also depends on other settings below.
 #                       0 : Don't print statistics
 #                       1 : Print statistics (Default)
+# 'script_base_path'  : Base path of all the scripts that are sourced here:
+#                       Default is set to './'
 # ------------------------------- Timing settings -----------------------------
 # 'inject_start_time' : Earliest time of the first fault injection.
 # 'inject_stop_time'  : Latest possible time for a fault injection.
@@ -168,10 +170,11 @@
 ##################################
 
 # General
-if {![info exists verbosity]}        { set verbosity          2 }
-if {![info exists log_injections]}   { set log_injections     0 }
-if {![info exists seed]}             { set seed           12345 }
-if {![info exists print_statistics]} { set print_statistics   1 }
+if {![info exists verbosity]}        { set verbosity          2   }
+if {![info exists log_injections]}   { set log_injections     0   }
+if {![info exists seed]}             { set seed           12345   }
+if {![info exists print_statistics]} { set print_statistics   1   }
+if {![info exists script_base_path]} { set script_base_path  "./" }
 # Timing settings
 if {![info exists inject_start_time]}            { set inject_start_time          100ns }
 if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
@@ -210,7 +213,7 @@ if {[llength $forced_injection_times] != [llength $forced_injection_signals] && 
 }
 
 # Source generic netlist extraction procs
-source ../scripts/fault_injection/extract_nets.tcl
+source [subst ${::script_base_path}extract_nets.tcl]
 
 ########################################
 #  Finish setup depending on settings  #
