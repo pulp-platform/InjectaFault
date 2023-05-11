@@ -738,7 +738,9 @@ proc inject_fault {include_in_statistics} {
     }
     # flip the random net
     if {$allow_flip} {
-      set flip_return [::flipbit $net_to_flip $is_register]
+      if {[catch {set flip_return [::flipbit $net_to_flip $is_register]}]} {
+        set flip_return {0 "x" "x"}
+      }
       if {[lindex $flip_return 0]} {
         set success 1
         if {$is_register && !$::allow_multi_bit_upset} {

@@ -30,8 +30,9 @@ proc regfile_path {group tile core} {
 
 proc lsu_path {group tile core} {
   set base [base_path $group $tile $core]
-  if {$::is_dmr_enabled} { return $base/gen_DMR_lsu/i_snitch_lsu }
-  else                   { return $base/gen_lsu/i_snitch_lsu }
+  if {$::is_dmr_enabled} { return $base/gen_DMR_lsu/i_snitch_lsu
+  } else                 { return $base/gen_lsu/i_snitch_lsu
+  }
 }
 
 proc lsu_id_path {group tile core} {
