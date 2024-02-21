@@ -582,10 +582,15 @@ proc flipbit {signal_name is_register} {
   set old_value [examine -radixenumsymbolic $signal_name]
   # check if net is an enum
   if {[examine -radixenumnumeric $signal_name] != [examine -radixenumsymbolic $signal_name]} {
-    set old_value_numeric [examine -radix binary,enumnumeric $signal_name]
-    set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
-    while {$old_value_numeric == $new_value_numeric && [string length $old_value_numeric] != 1} {
-      set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
+    set examine_string [examine -unsigned -radixenumnumeric $signal_name]
+    regexp {(\d*)'\w(\d*)} $examine_string -> length old_value_numeric
+    if {$length != 1} {
+      set new_value_numeric [expr int(rand()*([expr 2 ** $length]))]
+      while {$old_value_numeric == $new_value_numeric} {
+        set new_value_numeric [expr int(rand()*([expr 2 ** $length]))]
+      }
+    } else {
+      set new_value_numeric [expr {$old_value_numeric ? 0 : 1}]
     }
     if {$is_register} {
       force -freeze $signal_name $new_value_numeric -cancel $::register_fault_duration
