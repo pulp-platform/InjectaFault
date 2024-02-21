@@ -24,4 +24,4 @@ documented within the respective files.
 
 Unless specified otherwise in the respective file headers, all code checked into this repository is
 made available under a permissive license. All hardware sources and tool scripts are licensed under
-the Solderpad Hardware License 0.51 (see LICENSE).
+the Solderpad Hardware License 0.51 (see `LICENSE`).

@@ -36,6 +36,8 @@
 #                            filter them using the given patterns, and
 #                            recursively extract them using 'extract_netlists'.
 
+if {![info exists verbosity]}        { set verbosity          2 }
+
 ##################################
 #  Net extraction utility procs  #
 ##################################
