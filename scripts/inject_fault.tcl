@@ -604,8 +604,11 @@ proc flipbit {signal_name is_register} {
     set len [string length $bin_val]
     set flip_index 0
     if {$len != 1} {
+      set describe_string [describe $flip_signal_name]
+      regexp {\[(\d+):(\d+)\]} $describe_string -> upper_index lower_index
       set flip_index [expr int(rand()*$len)]
-      set flip_signal_name $signal_name\($flip_index\)
+      set flip_index_with_offset [expr $flip_index + $lower_index]
+      set flip_signal_name $signal_name\($flip_index_with_offset\)
     }
     set old_bit_value "0"
     set new_bit_value "1"
