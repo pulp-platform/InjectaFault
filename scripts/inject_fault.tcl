@@ -213,7 +213,7 @@ if {[llength $forced_injection_times] != [llength $forced_injection_signals] && 
 }
 
 # Source generic netlist extraction procs
-source [subst ${::script_base_path}extract_nets.tcl]
+source [file join ${::script_base_path} extract_nets.tcl]
 
 ########################################
 #  Finish setup depending on settings  #
