@@ -213,7 +213,7 @@ if {[llength $forced_injection_times] != [llength $forced_injection_signals] && 
 }
 
 # Source generic netlist extraction procs
-source [subst ${::script_base_path}extract_nets.tcl]
+source [file join ${::script_base_path} extract_nets.tcl]
 
 ########################################
 #  Finish setup depending on settings  #
@@ -582,10 +582,15 @@ proc flipbit {signal_name is_register} {
   set old_value [examine -radixenumsymbolic $signal_name]
   # check if net is an enum
   if {[examine -radixenumnumeric $signal_name] != [examine -radixenumsymbolic $signal_name]} {
-    set old_value_numeric [examine -radix binary,enumnumeric $signal_name]
-    set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
-    while {$old_value_numeric == $new_value_numeric && [string length $old_value_numeric] != 1} {
-      set new_value_numeric [expr int(rand()*([expr 2 ** [string length $old_value_numeric]]))]
+    set examine_string [examine -unsigned -radixenumnumeric $signal_name]
+    regexp {(\d*)'\w(\d*)} $examine_string -> length old_value_numeric
+    if {$length != 1} {
+      set new_value_numeric [expr int(rand()*([expr 2 ** $length]))]
+      while {$old_value_numeric == $new_value_numeric} {
+        set new_value_numeric [expr int(rand()*([expr 2 ** $length]))]
+      }
+    } else {
+      set new_value_numeric [expr {$old_value_numeric ? 0 : 1}]
     }
     if {$is_register} {
       force -freeze $signal_name $new_value_numeric -cancel $::register_fault_duration
@@ -599,8 +604,11 @@ proc flipbit {signal_name is_register} {
     set len [string length $bin_val]
     set flip_index 0
     if {$len != 1} {
+      set describe_string [describe $flip_signal_name]
+      regexp {\[(\d+):(\d+)\]} $describe_string -> upper_index lower_index
       set flip_index [expr int(rand()*$len)]
-      set flip_signal_name $signal_name\($flip_index\)
+      set flip_index_with_offset [expr $flip_index + $lower_index]
+      set flip_signal_name $signal_name\($flip_index_with_offset\)
     }
     set old_bit_value "0"
     set new_bit_value "1"
