@@ -174,7 +174,7 @@ if {![info exists verbosity]}        { set verbosity          2   }
 if {![info exists log_injections]}   { set log_injections     0   }
 if {![info exists seed]}             { set seed           12345   }
 if {![info exists print_statistics]} { set print_statistics   1   }
-if {![info exists script_base_path]} { set script_base_path  "./" }
+if {![info exists fi_common_dir]}    { set fi_common_dir   "./"   }
 # Timing settings
 if {![info exists inject_start_time]}            { set inject_start_time          100ns }
 if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
@@ -213,7 +213,7 @@ if {[llength $forced_injection_times] != [llength $forced_injection_signals] && 
 }
 
 # Source generic netlist extraction procs
-source [file join ${::script_base_path} extract_nets.tcl]
+source [file join ${::fi_common_dir} extract_nets.tcl]
 
 ########################################
 #  Finish setup depending on settings  #
