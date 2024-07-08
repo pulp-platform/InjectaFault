@@ -596,7 +596,7 @@ proc flipbit {signal_name is_register} {
     if {$is_register} {
       force -freeze $signal_name $new_value_numeric -cancel $::register_fault_duration
     } else {
-      force -freeze $signal_name $new_value_numeric, $old_value_numeric $::signal_fault_duration -cancel $::signal_fault_duration
+      force -freeze $signal_name $new_value_numeric -cancel $::signal_fault_duration
     }
     set success 1
   } else {
@@ -620,7 +620,7 @@ proc flipbit {signal_name is_register} {
     if {$is_register} {
       force -freeze $flip_signal_name $new_bit_value -cancel $::register_fault_duration
     } else {
-      force -freeze $flip_signal_name $new_bit_value, $old_bit_value $::signal_fault_duration -cancel $::signal_fault_duration
+      force -freeze $flip_signal_name $new_bit_value -cancel $::signal_fault_duration
     }
     if {[examine -radix binary $signal_name] != $bin_val} {set success 1}
   }
