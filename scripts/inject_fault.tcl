@@ -590,11 +590,6 @@ proc flipbit {signal_name is_register} {
   set old_value_binary "1"
   regexp {(\d*)'b(\d*)} $old_value_string -> length old_value_binary
 
-  # In case there are only Xs in the value we just give up and return no success.
-  if {[string length $old_value_binary] == 0} {
-    return [list 0 "" ""]
-  }
-
   # Decide which bit to flip e.g. we choose 3 out of 0 to 5
   set flip_index [expr int(rand()*$length)]
 
@@ -603,6 +598,11 @@ proc flipbit {signal_name is_register} {
   set flip_index_string [expr $length - $flip_index - 1]
   set old_bit [string index $old_value_binary $flip_index_string]
   set new_bit [expr {$old_bit == "1"} ? "0" : "1"]
+
+  # In case there are only Xs in the value we just give up and return no success.
+  if {[string length $old_bit] == 0} {
+    return [list 0 "" ""]
+  }
 
   # Get information about the signal. How it looks depends on the signal quite a bit
   set describe_string [describe $signal_name]
