@@ -688,11 +688,9 @@ proc unflip_bit {signal_name flip_signal_name flip_value_binary unflip_value_bin
 
   # Split it up into length and bits e.g. length="6", old_value_binary="101010"
   # We set defaults here for the rare case that we get an enum which is outside of the enumerated names
-  # In that case, it might be that Questasim can't propperly output the binary representation and the regex fails
-  # We will then always flip the enum back into enum case 0 - for this it should always have an enumerated name.
-  set length 1
-  set current_value_binary "1"
-  regexp {(\d*)'b(\d*)} $current_value_string -> length current_value_binary
+  # In that case we assume the value did not change and we need to unflip it.
+  set current_value_binary $flip_value_binary
+  regexp {\d*'b(\d*)} $current_value_string -> current_value_binary
 
   # Get the current value in a nicer way just for the output
   set old_value_string_out [examine -radixenumsymbolic $signal_name]
