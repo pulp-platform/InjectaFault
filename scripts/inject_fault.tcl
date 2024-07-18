@@ -588,7 +588,12 @@ proc flipbit {signal_name is_register} {
   # We will then always flip the enum back into enum case 0 - for this it should always have an enumerated name.
   set length 1
   set old_value_binary "1"
-  regexp {(\d*)'\w(\d*)} $old_value_string -> length old_value_binary
+  regexp {(\d*)'b(\d*)} $old_value_string -> length old_value_binary
+
+  # In case there are only Xs in the value we just give up and return no success.
+  if {[string length $old_value_binary] == 0} {
+    return [list 0 "" ""]
+  }
 
   # Decide which bit to flip e.g. we choose 3 out of 0 to 5
   set flip_index [expr int(rand()*$length)]
@@ -596,7 +601,8 @@ proc flipbit {signal_name is_register} {
   # Find the opposite bit value at the index e.g. 3 is "1" so new_value_binary is "0"
   # String is MSB first (index 0) so we have to covert the index
   set flip_index_string [expr $length - $flip_index - 1]
-  set new_value_binary [expr {[string index $old_value_binary $flip_index_string] == "1"} ? "0" : "1"]
+  set old_bit [string index $old_value_binary $flip_index_string]
+  set new_bit [expr {$old_bit == "1"} ? "0" : "1"]
 
   # Get information about the signal. How it looks depends on the signal quite a bit
   set describe_string [describe $signal_name]
@@ -608,23 +614,25 @@ proc flipbit {signal_name is_register} {
       # So in this case the flip_signal_name is just the name of the signal
       # And we expand the new_value_binary to have the same width as the old_value_binary, but the one bit flipped
       set flip_signal_name $signal_name
-      set new_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_value_binary]     
+      set flip_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_bit]
+      set unflip_value_binary $old_value_binary
     }
     default {
       # In the case that it is not an enum, we only force the one bit that we want changed
       # So in this case we index into our signal and only force that one bit. 
-      # To make sure for non-zero indexed signals, we can look at describe.
-      # In ther there should be [<max_index>:<min_index>] for arrays. 
+      # To make sure for non-zero indexed signals, we can look at describe in ther there should be [<max_index>:<min_index>] for arrays. 
       # If regex doesnt max it we just assume it is 0-indexed.
-      set lower_index 0
-      regexp {\[\d+:(\d+)\]} $describe_string -> lower_index
-      set flip_index_with_offset [expr $flip_index + $lower_index]
       # Sometimes setting an index is not good on non-arrays and force gets confused, so only set it if necessary
       if {$length > 1} {
+        set lower_index 0
+        regexp {\[\d+:(\d+)\]} $describe_string -> lower_index
+        set flip_index_with_offset [expr $flip_index + $lower_index]
         set flip_signal_name $signal_name\[$flip_index_with_offset\]    
       } else {
         set flip_signal_name $signal_name
       }
+      set flip_value_binary $new_bit
+      set unflip_value_binary $old_bit
     }
   }
 
@@ -634,9 +642,35 @@ proc flipbit {signal_name is_register} {
   # Depending on if the thing is a register inject differently
   # 2# here defines the format as binary, so we are sure we have the same format in and out.
   if {$is_register} {
-    force -freeze $flip_signal_name "2#$new_value_binary" -cancel $::register_fault_duration
+    force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::register_fault_duration
   } else {
-    force -freeze $flip_signal_name "2#$new_value_binary" -cancel $::signal_fault_duration
+    # Figure out if the signal is an Enum or Register. In that case it might not return
+    # to the previous value alone when force is cancelled and we need to manually check it
+    switch -glob -- $describe_string {
+      *Register* {
+        # Registers always need a manual unflip
+        set manual_unflip 1   
+      }
+      *enum* {
+        # For enums, we can't tell if they are a register or not, unflip to be save
+        set manual_unflip 1   
+      }
+      default {
+        set manual_unflip 0   
+      }
+    }
+
+    if {$manual_unflip == 0} {
+      # We don't need a manual unflip -> force directly with the wanted duration
+      force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::signal_fault_duration
+    } else {
+      # We need a manual unflip -> deposit the new signal, then go back and fix it after some
+      force -deposit $flip_signal_name "2#$flip_value_binary"
+
+      set unflip_time [expr $::now + $::signal_fault_duration]
+      set unflip_command "::unflip_bit $signal_name $flip_signal_name $flip_value_binary $unflip_value_binary"
+      when -label unflip "\$now == @$unflip_time" "$unflip_command"
+    }
   }
 
   # Get the value back after the force command, also in the nice representation
@@ -646,6 +680,35 @@ proc flipbit {signal_name is_register} {
   set success [expr {[string equal $old_value_string_out $new_value_string_out]} ? 0 : 1] 
   set result [list $success $old_value_string_out $new_value_string_out]
   return $result
+}
+
+proc unflip_bit {signal_name flip_signal_name flip_value_binary unflip_value_binary} {
+  # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
+  set current_value_string [examine -radixenumnumeric -binary $flip_signal_name]
+
+  # Split it up into length and bits e.g. length="6", old_value_binary="101010"
+  # We set defaults here for the rare case that we get an enum which is outside of the enumerated names
+  # In that case, it might be that Questasim can't propperly output the binary representation and the regex fails
+  # We will then always flip the enum back into enum case 0 - for this it should always have an enumerated name.
+  set length 1
+  set current_value_binary "1"
+  regexp {(\d*)'b(\d*)} $current_value_string -> length current_value_binary
+
+  # Get the current value in a nicer way just for the output
+  set old_value_string_out [examine -radixenumsymbolic $signal_name]
+
+  # If the signal is still in the flipped state, unflip it
+  if {[string equal $flip_value_binary $current_value_binary]} {
+    force -deposit $flip_signal_name "2#$unflip_value_binary"
+
+    # Get the value back after the force command, also in the nice representation
+    set new_value_string_out [examine -radixenumsymbolic $signal_name]
+    echo "[time_ns $::now]: \[Fault Injection\] Unflipped $flip_signal_name from $old_value_string_out to $new_value_string_out."
+  } else {
+    echo "[time_ns $::now]: \[Fault Injection\] Unflip on $flip_signal_name aborted because it changed to $old_value_string_out."
+  }
+
+  nowhen unflip
 }
 
 ################################
