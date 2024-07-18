@@ -697,7 +697,7 @@ proc unflip_bit {signal_name flip_signal_name flip_value_binary unflip_value_bin
 
   # If the signal is still in the flipped state, unflip it
   if {[string equal $flip_value_binary $current_value_binary]} {
-    force -deposit $flip_signal_name "2#$unflip_value_binary"
+    force -freeze $flip_signal_name "2#$unflip_value_binary" -cancel 0
 
     # Get the value back after the force command, also in the nice representation
     set new_value_string_out [examine -radixenumsymbolic $signal_name]
