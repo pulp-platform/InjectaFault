@@ -606,34 +606,32 @@ proc flipbit {signal_name is_register} {
 
   # Get information about the signal. How it looks depends on the signal quite a bit
   set describe_string [describe $signal_name]
+  set net_type [get_net_type $signal_name]
 
   # Check if the signal is an enum e.g. describe_string has "enum" in it.
-  switch -glob -- $describe_string {
-    *enum* {
-      # In case we have an enum, we need to set the entire thing at once TODO: Maybe it can be done anyway?
-      # So in this case the flip_signal_name is just the name of the signal
-      # And we expand the new_value_binary to have the same width as the old_value_binary, but the one bit flipped
+  if {$net_type == "Enum"} {
+    # In case we have an enum, we need to set the entire thing at once TODO: Maybe it can be done anyway?
+    # So in this case the flip_signal_name is just the name of the signal
+    # And we expand the new_value_binary to have the same width as the old_value_binary, but the one bit flipped
+    set flip_signal_name $signal_name
+    set flip_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_bit]
+    set unflip_value_binary $old_value_binary
+  } else {
+    # In the case that it is not an enum, we only force the one bit that we want changed
+    # So in this case we index into our signal and only force that one bit. 
+    # To make sure for non-zero indexed signals, we can look at describe in ther there should be [<max_index>:<min_index>] for arrays. 
+    # If regex doesnt max it we just assume it is 0-indexed.
+    # Sometimes setting an index is not good on non-arrays and force gets confused, so only set it if necessary
+    if {$length > 1} {
+      set lower_index 0
+      regexp {\[\d+:(\d+)\]} $describe_string -> lower_index
+      set flip_index_with_offset [expr $flip_index + $lower_index]
+      set flip_signal_name $signal_name\[$flip_index_with_offset\]    
+    } else {
       set flip_signal_name $signal_name
-      set flip_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_bit]
-      set unflip_value_binary $old_value_binary
     }
-    default {
-      # In the case that it is not an enum, we only force the one bit that we want changed
-      # So in this case we index into our signal and only force that one bit. 
-      # To make sure for non-zero indexed signals, we can look at describe in ther there should be [<max_index>:<min_index>] for arrays. 
-      # If regex doesnt max it we just assume it is 0-indexed.
-      # Sometimes setting an index is not good on non-arrays and force gets confused, so only set it if necessary
-      if {$length > 1} {
-        set lower_index 0
-        regexp {\[\d+:(\d+)\]} $describe_string -> lower_index
-        set flip_index_with_offset [expr $flip_index + $lower_index]
-        set flip_signal_name $signal_name\[$flip_index_with_offset\]    
-      } else {
-        set flip_signal_name $signal_name
-      }
-      set flip_value_binary $new_bit
-      set unflip_value_binary $old_bit
-    }
+    set flip_value_binary $new_bit
+    set unflip_value_binary $old_bit  
   }
 
   # Get the current value in a nicer way just for the output
@@ -646,30 +644,16 @@ proc flipbit {signal_name is_register} {
   } else {
     # Figure out if the signal is an Enum or Register. In that case it might not return
     # to the previous value alone when force is cancelled and we need to manually check it
-    switch -glob -- $describe_string {
-      *Register* {
-        # Registers always need a manual unflip
-        set manual_unflip 1   
-      }
-      *enum* {
-        # For enums, we can't tell if they are a register or not, unflip to be save
-        set manual_unflip 1   
-      }
-      default {
-        set manual_unflip 0   
-      }
-    }
-
-    if {$manual_unflip == 0} {
-      # We don't need a manual unflip -> force directly with the wanted duration
-      force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::signal_fault_duration
-    } else {
+    if {$net_type == "Register" || $net_type == "Enum"} {
       # We need a manual unflip -> deposit the new signal, then go back and fix it after some
       force -deposit $flip_signal_name "2#$flip_value_binary"
 
       set unflip_time [expr $::now + $::signal_fault_duration]
       set unflip_command "::unflip_bit $signal_name $flip_signal_name $flip_value_binary $unflip_value_binary"
       when -label unflip "\$now == @$unflip_time" "$unflip_command"
+    } else {
+      # We don't need a manual unflip -> force directly with the wanted duration
+      force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::signal_fault_duration
     }
   }
 
