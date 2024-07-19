@@ -635,7 +635,7 @@ proc flipbit {signal_name is_register} {
   }
 
   # Get the current value in a nicer way just for the output
-  set old_value_string_out [examine -radixenumsymbolic $signal_name]
+  set old_value_symbolic [examine -radixenumsymbolic $signal_name]
 
   # Depending on if the thing is a register inject differently
   # 2# here defines the format as binary, so we are sure we have the same format in and out.
@@ -658,10 +658,10 @@ proc flipbit {signal_name is_register} {
   }
 
   # Get the value back after the force command, also in the nice representation
-  set new_value_string_out [examine -radixenumsymbolic $signal_name]
+  set new_value_symbolic [examine -radixenumsymbolic $signal_name]
 
   # Check that it actually changed and set success if it did
-  set success [expr {[string equal $old_value_string_out $new_value_string_out]} ? 0 : 1] 
+  set success [expr {[string equal $old_value_symbolic $new_value_symbolic]} ? 0 : 1] 
   set was_bluetooth 0
 
   # Set up unflip
@@ -677,42 +677,33 @@ proc flipbit {signal_name is_register} {
     #    worst case we got an event and inject a second fault. Best case we fix the problem we caused.
     #    In this case we want to set success to 1 since we MIGHT have flipped a bit.
     if {$success == 1} {
-      set unflip_command "::unflip_bit $signal_name $flip_signal_name $flip_value_binary $unflip_value_binary 0"
+      set unflip_command "::unflip_bit $signal_name $flip_signal_name $new_value_symbolic $unflip_value_binary 0"
     } else {
       echo "[time_ns $::now]: \[Fault Injection\] WARNING: Might have used bluetooth to inject fault, unsure where it connected."
       set success 1
-      set unflip_command "::unflip_bit $signal_name $flip_signal_name $unflip_value_binary $unflip_value_binary 1"
+      set unflip_command "::unflip_bit $signal_name $flip_signal_name $new_value_symbolic $unflip_value_binary 1"
     } 
 
     when -label unflip "\$now == @$unflip_time" "$unflip_command"
   }
 
-  set result [list $success $old_value_string_out $new_value_string_out]
+  set result [list $success $old_value_symbolic $new_value_symbolic]
   return $result
 }
 
-proc unflip_bit {signal_name flip_signal_name flip_value_binary unflip_value_binary force_unflip} {
-  # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
-  set current_value_string [examine -radixenumnumeric -binary $flip_signal_name]
-
-  # Split it up into length and bits e.g. length="6", old_value_binary="101010"
-  # We set defaults here for the rare case that we get an enum which is outside of the enumerated names
-  # In that case we assume the value did not change and we need to unflip it.
-  set current_value_binary $flip_value_binary
-  regexp {\d*'b(\d*)} $current_value_string -> current_value_binary
-
+proc unflip_bit {signal_name flip_signal_name expected_value_symbolic unflip_value_binary force_unflip} {
   # Get the current value in a nicer way just for the output
-  set old_value_string_out [examine -radixenumsymbolic $signal_name]
+  set old_value_symbolic [examine -radixenumsymbolic $signal_name]
 
   # If the signal is still in the flipped state, unflip it
-  if {[string equal $flip_value_binary $current_value_binary] || $force_unflip == 1} {
+  if {[string equal $expected_value_symbolic $old_value_symbolic] || $force_unflip == 1} {
     force -freeze $flip_signal_name "2#$unflip_value_binary" -cancel 0
 
     # Get the value back after the force command, also in the nice representation
-    set new_value_string_out [examine -radixenumsymbolic $signal_name]
-    echo "[time_ns $::now]: \[Fault Injection\] Unflipped $flip_signal_name from $old_value_string_out to $new_value_string_out."
+    set new_value_symbolic [examine -radixenumsymbolic $signal_name]
+    echo "[time_ns $::now]: \[Fault Injection\] Unflipped $signal_name from $old_value_symbolic to $new_value_symbolic."
   } else {
-    echo "[time_ns $::now]: \[Fault Injection\] Unflip on $flip_signal_name aborted because it changed to $old_value_string_out."
+    echo "[time_ns $::now]: \[Fault Injection\] Unflip on $signal_name aborted because it changed to $old_value_symbolic."
   }
 
   nowhen unflip
