@@ -650,7 +650,6 @@ proc flipbit {signal_name is_register} {
 
       set unflip_time [expr $::now + $::signal_fault_duration]
       set unflip_command "::unflip_bit $signal_name $flip_signal_name $flip_value_binary $unflip_value_binary"
-      when -label unflip "\$now == @$unflip_time" "$unflip_command"
     } else {
       # We don't need a manual unflip -> force directly with the wanted duration
       force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::signal_fault_duration
@@ -662,6 +661,12 @@ proc flipbit {signal_name is_register} {
 
   # Check that it actually changed and set success if it did
   set success [expr {[string equal $old_value_string_out $new_value_string_out]} ? 0 : 1] 
+
+  # Only set up unflip in case flip was sucessful
+  if {$success == 1 && [info exists unflip_time]} {
+    when -label unflip "\$now == @$unflip_time" "$unflip_command"
+  }
+
   set result [list $success $old_value_string_out $new_value_string_out]
   return $result
 }
