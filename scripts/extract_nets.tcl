@@ -44,23 +44,23 @@ if {![info exists verbosity]}        { set verbosity          2 }
 
 proc get_net_type {signal_name} {
   set sig_description [examine -describe $signal_name]
-  switch -glob -- $sig_description {
-  *Register* {
-    # ^ Matches Register, Signed Register, Integer Register
-    return "Register"
+  set type_string [string trim [string range $sig_description 1 [string wordend $sig_description 1]] " \n\r()\[\]{}:"]
+
+  # In case the first word is a predicate, we strip this word from the front and then try again
+  if { $type_string == "Verilog" || $type_string == "Signed" || $type_string == "Integer"} {
+
+      # Strip first word from text
+      set sig_description [string range $sig_description [string wordend $sig_description 1] [string length $sig_description]]
+
+      # Try exact same thing again
+      set type_string [string trim [string range $sig_description 1 [string wordend $sig_description 1]] " \n\r()\[\]{}:"]
+
+      # Capitalize Enum so it has the same format as other types
+      if { $type_string == "enum" } {
+        set type_string "Enum"
+      }
   }
-  *Net* {
-    # ^ Matches Net, Signed Net, Integer Net
-    return "Net"
-  }
-  *enum* {
-    # ^ Matches Verilog enum
-    return "Enum"
-  }
-  default {
-    return [string trim [string range $sig_description 1 [string wordend $sig_description 1]] " \n\r()\[\]{}"]
-  }
-}
+  return $type_string
 }
 
 proc get_net_array_length {signal_name} {
