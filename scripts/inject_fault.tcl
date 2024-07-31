@@ -49,8 +49,9 @@
 #                       triggered circuit is used as injection clock, it is
 #                       recommended to set the trigger to '0', so injected
 #                       flips can clearly be distinguished in the waveforms.
-# 'fault_period'      : Period of the fault injection in clock cycles of the
-#                       injection clock. Set to 0 for only a single flip.
+# 'fault_period'      : How many cycles of the `injection_clock` should pass
+#                       until the next fault injection is undertaken.
+#                       Set to 0 for only a single flip.
 # 'rand_initial_injection_phase' : Set the phase relative to the 'fault_period'
 #                       to a random initial value between 0 (inclusive) and
 #                       'fault_period' (exclusive). If multiple simulation
