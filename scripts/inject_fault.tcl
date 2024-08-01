@@ -179,7 +179,7 @@ if {![info exists script_base_path]} { set script_base_path  "./" }
 # Timing settings
 if {![info exists inject_start_time]}            { set inject_start_time          100ns }
 if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
-if {![info exists injection_clock]}              { set injection_clock          "clk"   }
+if {![info exists injection_clock]}              { set injection_clock             ""   }
 if {![info exists injection_clock_trigger]}      { set injection_clock_trigger      0   }
 if {![info exists fault_period]}                 { set fault_period                 0   }
 if {![info exists rand_initial_injection_phase]} { set rand_initial_injection_phase 0   }
