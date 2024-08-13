@@ -111,12 +111,18 @@ proc get_record_field_names {signal_name} {
 #
 #              Set 'injection_save' to 1 to make sure only nets that can be
 #              injected are extracted. Questa SIM has a bug in the 'force'
-#              command: When trying to force a signal in an array inside a
+#              command:
+#
+#              1. When trying to force a signal in an array inside a
 #              struct (Record), the force command will force the field at array
-#              index 0, and not the selected index. E.g. forcing a.b[7] will
-#              actually force a.b[0]. When 'injection_save' is set to 1,
-#              arrays inside structs are skipped from extraction, and a
-#              info message is generated if the verbosity is high enough
+#              index 0, and not the selected index. E.g. 
+#              Forcing a.b[7] will actually force a.b[0]. 
+#
+#              2. When trying to forca a signal in a struct (Record) inside
+#              another struct (Record) inside an array then the force will
+#              always use array index 0. E.g.:
+#              Forcing a[3].b will actually force a[0].b
+
 proc extract_netlists {item_list {injection_save 0}} {
   set extract_list [list]
   foreach item $item_list {
@@ -124,13 +130,17 @@ proc extract_netlists {item_list {injection_save 0}} {
     if {$item_type == "Register" || $item_type == "Net" || $item_type == "Enum"} {
       lappend extract_list $item
     } elseif { $item_type == "Array"} {
-      set array_length [get_net_array_length $item]
-      if {$injection_save && [string first "." $item] != -1} {
-        if { $::verbosity >= 3 } {
-          echo "\[Netlist Extraction\] Net $item is an array inside a struct and will be skipped."
-        }
+      set first_net "$item\[0\]"
+      set first_net_type [get_net_type $first_net]
+      if {$injection_save && $first_net_type == "Record"} {
+          if { $::verbosity >= 3 } {
+            echo "\[Netlist Extraction\] Net $item is an array that contains structs (which is buggy), it will be shortened."
+          }
+          # Only add the 0th element since it is not affected by the bug
+          set extract_list [concat $extract_list [extract_netlists $first_net $injection_save]]
       } else {
-        for {set i 0}  {$i < $array_length} {incr i} {
+        set array_length [get_net_array_length $item]
+        for {set i 0} {$i < $array_length} {incr i} {
           set new_net "$item\[$i\]"
           set extract_list [concat $extract_list [extract_netlists $new_net $injection_save]]
         }
@@ -139,7 +149,17 @@ proc extract_netlists {item_list {injection_save 0}} {
       set fields [get_record_field_names $item]
       foreach field $fields {
         set new_net $item.$field
-        set extract_list [concat $extract_list [extract_netlists $new_net $injection_save]]
+        set new_item_type [get_net_type $new_net]
+        # Check for the case 1. and exclude
+        if {$injection_save && $new_item_type == "Array"} {
+          if { $::verbosity >= 3 } {
+            echo "\[Netlist Extraction\] Net $new_net is an array inside a struct (which is buggy), it will be shortened."
+          }
+          # Only add the 0th element since it is not affected by the bug
+          set extract_list [concat $extract_list [extract_netlists "$new_net\[0\]" $injection_save]]
+        } else {
+          set extract_list [concat $extract_list [extract_netlists $new_net $injection_save]]
+        }
       }
     } elseif { $item_type == "int"} {
       # Ignore
