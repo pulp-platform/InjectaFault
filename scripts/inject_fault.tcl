@@ -582,6 +582,12 @@ proc flipbit {signal_name is_register} {
   # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
   set old_value_string [examine -radixenumnumeric -binary $signal_name]
 
+  # Guard against strange signals that can not be read.
+  if {$old_value_string == "<N/A>"} {
+    echo "WARNING: Found signal $signal_name which can not be read, returns $old_value_string instead!"
+    return [list 0 "" ""]
+  }
+
   # Split it up into length and bits e.g. length="6", old_value_binary="101010"
   # We set defaults here for the rare case that we get an enum which is outside of the enumerated names
   # In that case, it might be that Questasim can't propperly output the binary representation and the regex fails
@@ -647,14 +653,13 @@ proc flipbit {signal_name is_register} {
   } else {
     # Figure out if the signal is an Enum or Register. In that case it might not return
     # to the previous value alone when force is cancelled and we need to manually check it
+
     if {$net_type == "Register" || $net_type == "Enum"} {
-      echo "DEBUG: Found unrecoverable type"
       # We need a manual unflip -> deposit the new signal, then go back and fix it after some
       force -deposit $flip_signal_name "2#$flip_value_binary"
 
       set unflip_time [expr $::now + $::signal_fault_duration]
     } else {
-      echo "DEBUG: Found recoverable type"
       # We don't need a manual unflip -> force directly with the wanted duration
       force -freeze $flip_signal_name "2#$flip_value_binary" -cancel $::signal_fault_duration
     }
@@ -668,28 +673,16 @@ proc flipbit {signal_name is_register} {
   set was_bluetooth 0
 
   # Set up unflip
-  if {[info exists unflip_time]} {
-    # Bluetooth Protection (Faults sometimes get injected into different places than they should)
-    # In case we have success == 1 we know that the fault was injected into our target signal
-    # In this case if no event is recieved until the unflip the flip it back
-    # In case we have success == 0 there are two options:
-    # 1. The signal is unflippable - whatever flip we might have done did not have any impact
-    #    consequently the unflip will also have no impact
-    # 2. The flip used bluetooth (got injected into another signal than expected)
-    #    in this case we don't know where our fault went, but we can try unflip it again with the same command
-    #    worst case we got an event and inject a second fault. Best case we fix the problem we caused.
-    #    In this case we want to set success to 1 since we MIGHT have flipped a bit.
-    if {$success == 1} {
-      set unflip_command "::unflip_bit $signal_name $select_index $flip_value_binary $flip_signal_name $unflip_value_binary 0"
-      when -label unflip "\$now == @$unflip_time" "$unflip_command"
-    }
+  if {[info exists unflip_time] && $success == 1} {
+    set unflip_command "::unflip_bit $signal_name $select_index $flip_value_binary $flip_signal_name $unflip_value_binary"
+    when -label unflip "\$now == @$unflip_time" "$unflip_command"
   }
 
   set result [list $success $old_value_symbolic $new_value_symbolic]
   return $result
 }
 
-proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip_value_binary force_unflip} {
+proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip_value_binary} {
   # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
   set old_value_string [examine -radixenumnumeric -binary $signal_name]
 
@@ -713,7 +706,7 @@ proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip
   set old_value_symbolic [examine -radixenumsymbolic $signal_name]
 
   # If the signal is still in the flipped state, unflip it
-  if {$old_value == $expected_value || $force_unflip == 1} {
+  if {$old_value == $expected_value} {
     force -freeze $flip_signal_name "2#$unflip_value_binary" -cancel 0
 
     # Get the value back after the force command, also in the nice representation
