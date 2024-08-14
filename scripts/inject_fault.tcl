@@ -621,6 +621,17 @@ proc flipbit {signal_name is_register} {
     # And we expand the new_value_binary to have the same width as the old_value_binary, but the one bit flipped
     set flip_signal_name $signal_name
     set flip_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_bit]
+    
+    # Make sure the enum value is still reasonable, since questasim might run into problems otherwise
+    set enum_values 1
+    regexp {\[(\d+) enumeration values\]} $describe_string -> enum_values
+    set flip_value_decimal [expr {"0b$flip_value_binary"}]
+
+    if {$flip_value_decimal >= $enum_values} {
+      echo "WARNING: Enum injection out of bounds!"
+      return [list 0 "" ""]
+    }
+
     set unflip_value_binary $old_value_binary
     set select_index -1
   } else {
