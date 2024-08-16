@@ -584,7 +584,7 @@ proc flipbit {signal_name is_register} {
 
   # Guard against strange signals that can not be read.
   if {$old_value_string == "<N/A>"} {
-    echo "WARNING: Found signal $signal_name which can not be read, returns $old_value_string instead!"
+    echo "\[Fault Injection\] Warning: Found signal $signal_name which can not be parsed, returns $old_value_string instead!"
     return [list 0 "" ""]
   }
 
@@ -628,7 +628,7 @@ proc flipbit {signal_name is_register} {
     set flip_value_decimal [expr {"0b$flip_value_binary"}]
 
     if {$flip_value_decimal >= $enum_values} {
-      echo "WARNING: Enum injection out of bounds!"
+      echo "\[Fault Injection\] Warning: Enum injection out of bounds!"
       return [list 0 "" ""]
     }
 
