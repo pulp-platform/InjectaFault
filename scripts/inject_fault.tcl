@@ -616,22 +616,37 @@ proc flipbit {signal_name is_register} {
 
   # Check if the signal is an enum e.g. describe_string has "enum" in it.
   if {$net_type == "Enum"} {
-    # In case we have an enum, we need to set the entire thing at once TODO: Maybe it can be done anyway?
+    # In case we have an enum, we need to set the entire thing at once.
     # So in this case the flip_signal_name is just the name of the signal
-    # And we expand the new_value_binary to have the same width as the old_value_binary, but the one bit flipped
+    # We might modify more than one bit in this case, but as the mapping 
+    # might be different in hardware anyway this is fine.
     set flip_signal_name $signal_name
-    set flip_value_binary [string replace $old_value_binary $flip_index_string $flip_index_string $new_bit]
     
-    # Make sure the enum value is still reasonable, since questasim might run into problems otherwise
-    set enum_values 1
-    regexp {\[(\d+) enumeration values\]} $describe_string -> enum_values
-    set flip_value_decimal [expr {"0b$flip_value_binary"}]
+    # Search for all values set in the enum, in the describe_string 
+    # they are always prepended by an equal sign.
+    set enum_matches [regexp -all -inline {=(\d+)} $describe_string]
 
-    if {$flip_value_decimal >= $enum_values} {
-      echo "\[Fault Injection\] Warning: Enum injection out of bounds!"
-      return [list 0 "" ""]
+    # Since this returns the whole matched string and the capture group
+    # we need to only use the capture group
+    set enum_values {}
+    foreach {whole match} $enum_matches {
+      lappend enum_values $match
     }
 
+    # Select one of these values at random
+    set random_index [expr {int(rand() * [llength $enum_values])}]
+    set flip_value_decimal [lindex $enum_values $random_index] 
+
+    # Convert value to binary so it can be used by the injector
+    set flip_value_binary_short [format "%b" $flip_value_decimal]
+
+    # Zero-extend the binary value to match the length of old_value
+    # This is needed so later comparisons work propperly
+    set binary_length [string length $old_value_binary]
+    set flip_value_binary [format "%0*s" $binary_length $flip_value_binary_short]
+
+    # Old value in this case is also the whole value, 
+    # and index -1 as we don't select an index
     set unflip_value_binary $old_value_binary
     set select_index -1
   } else {
