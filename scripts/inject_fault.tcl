@@ -630,7 +630,10 @@ proc flipbit {signal_name is_register} {
     # we need to only use the capture group
     set enum_values {}
     foreach {whole match} $enum_matches {
-      lappend enum_values $match
+      # Only keep the value that are different from the current value
+      if {$match != [expr {"0b$old_value_binary"}]} {
+        lappend enum_values $match
+      }
     }
 
     # Select one of these values at random
@@ -638,17 +641,14 @@ proc flipbit {signal_name is_register} {
     set flip_value_decimal [lindex $enum_values $random_index] 
 
     # Convert value to binary so it can be used by the injector
-    set flip_value_binary_short [format "%b" $flip_value_decimal]
-
-    # Zero-extend the binary value to match the length of old_value
+    # Make sure to zero-extend the binary value to match the length of old_value
     # This is needed so later comparisons work propperly
-    set binary_length [string length $old_value_binary]
-    set flip_value_binary [format "%0*s" $binary_length $flip_value_binary_short]
+    set flip_value_binary [format "%0*b" [string length $old_value_binary] $flip_value_decimal]
 
     # Old value in this case is also the whole value, 
     # and index -1 as we don't select an index
     set unflip_value_binary $old_value_binary
-    set select_index -1
+    set select_index "Enum"
   } else {
     # In the case that it is not an enum, we only force the one bit that we want changed
     # So in this case we index into our signal and only force that one bit. 
@@ -663,7 +663,7 @@ proc flipbit {signal_name is_register} {
       set select_index $flip_index   
     } else {
       set flip_signal_name $signal_name
-      set select_index -1
+      set select_index "Single"
     }
     set flip_value_binary $new_bit
     set unflip_value_binary $old_bit  
@@ -682,6 +682,7 @@ proc flipbit {signal_name is_register} {
 
     if {$net_type == "Register" || $net_type == "Enum"} {
       # We need a manual unflip -> deposit the new signal, then go back and fix it after some
+      # Use -deposit over -force -cancel 0 to make sure if the signal is recoverable it hold the fault
       force -deposit $flip_signal_name "2#$flip_value_binary"
 
       set unflip_time [expr $::now + $::signal_fault_duration]
@@ -720,18 +721,21 @@ proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip
   set old_value_binary $expected_value
   regexp {(\d*)'b(\d*)} $old_value_string -> length old_value_binary
 
-  # Find the respective bit in the binary strong to compare
-  if {$select_index > -1} {
+  if {$select_index == "Enum" || $select_index == "Single"} {
+    # In case of an Enum or single bit signal we compare the whole signal
+    set old_value $old_value_binary
+  } else {
+    # Else find the respective bit in the binary to compare
     set flip_index_string [expr $length - $select_index - 1]
     set old_value [string index $old_value_binary $flip_index_string]
-  } else {
-    set old_value $old_value_binary
   }
 
   # Get the current value in a nicer way just for the output
   set old_value_symbolic [examine -radixenumsymbolic $signal_name]
 
   # If the signal is still in the flipped state, unflip it
+  # We use -freeze -cancel 0 here instead of -deposit so that if we accidentally got a 
+  # recoverable signal it can recover on it's own
   if {$old_value == $expected_value} {
     force -freeze $flip_signal_name "2#$unflip_value_binary" -cancel 0
 
@@ -739,7 +743,30 @@ proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip
     set new_value_symbolic [examine -radixenumsymbolic $signal_name]
     echo "[time_ns $::now]: \[Fault Injection\] Unflipped $signal_name from $old_value_symbolic to $new_value_symbolic."
   } else {
-    echo "[time_ns $::now]: \[Fault Injection\] Unflip on $signal_name aborted because it changed to $old_value_symbolic."
+    if {$select_index == "Enum"} {
+      # In case of an enum we have a relative write which changed our value,
+      # so we need to try to find the relative way back and force that value
+      echo "[time_ns $::now]: \[Fault Injection\] Unflip on $signal_name caused enum recovery because it changed to $old_value_symbolic."
+
+      # Convert binary strings to decimal for calculation
+      set old_value_decimal [expr {"0b$old_value_binary"}]
+      set expected_value_decimal [expr {"0b$expected_value"}]
+      set unflip_value_decimal [expr {"0b$unflip_value_binary"}]
+
+      # Calculate the recovery value
+      # If our injection increased the enum internal value by 5 then we would now 
+      # want to decrease the actual value by 5 again
+      set recovery_value_decimal [expr {$old_value_decimal - $expected_value_decimal + $unflip_value_decimal}]
+
+      # Convert the test_value back to binary with leading zeros matching the length of $unflip_value_binary
+      set recovery_value_binary [format "%0*b" [string length $unflip_value_binary] $recovery_value_decimal]
+
+      # Inject the recovery value to recover the diff
+      force -freeze $flip_signal_name "2#$recovery_value_binary" -cancel 0
+
+    } else {
+      echo "[time_ns $::now]: \[Fault Injection\] Unflip on $signal_name aborted because it changed to $old_value_symbolic."
+    }
   }
 
   nowhen unflip
