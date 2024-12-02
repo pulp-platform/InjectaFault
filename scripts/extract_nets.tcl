@@ -20,7 +20,7 @@
 # ------------------------- Netlist Extraction procs --------------------------
 # 'get_state_netlist'      : Example function for how to extract state nets.
 #                            Non-recursive implementation.
-# 'get_state_netlist_revursive' : Example function for how to extract state nets
+# 'get_state_netlist_recursive' : Example function for how to extract state nets
 #                            Recursive implementation.
 # 'get_next_state_netlist' : Example function for how to extract next state
 #                            nets. Non-recursive implementation.
@@ -152,8 +152,37 @@ proc get_state_netlist {base_path} {
 # Example proc on how to extract state nets.
 # This is not guaranteed to work for every circuit, as net may not be named
 # according to conventions!
-proc get_state_netlist_revursive {base_path} {
+proc get_state_netlist_recursive {base_path} {
   return [extract_netlists [find signal -r $base_path/*_q] 1]
+}
+
+proc get_state_netlist_recursive_filtered {base_path filter_list} {
+  set netlist [find signal -r $base_path/*_q];
+
+  # filter and sort the signals
+  set netlist_filtered [list];
+  foreach net $netlist {
+    set ignore_net 0
+    # ignore any net that matches any ignore pattern
+    foreach ignore_pattern $filter_list {
+      if {[string match $ignore_pattern $net]} {
+        set ignore_net 1
+        break
+      }
+    }
+    # add all nets that are not ignored
+    if {$ignore_net == 0} {
+      lappend netlist_filtered $net
+    }
+  }
+
+  # sort the filtered nets alphabetically
+  set netlist_filtered [lsort -dictionary $netlist_filtered]
+
+  # recursively extract all nets and enums from arrays and structs
+  set netlist_extracted [extract_netlists $netlist_filtered 1]
+
+  return $netlist_extracted
 }
 
 #####################
