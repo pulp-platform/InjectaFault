@@ -58,8 +58,8 @@ proc get_net_array_length {signal_name} {
 proc get_net_reg_width {signal_name} {
   set sig_description [examine -describe $signal_name]
   set length 1
-  if {[regexp "\\\[(\\d+):(\\d+)\\\]" $sig_description -> up_lim low_lim]} {
-    set length [expr $up_lim - $low_lim + 1]
+  if {[regexp "\\\[(\\d+):(\\d+)\\\]" $sig_description -> lim_a lim_b]} {
+    set length [expr {abs($lim_a - $lim_b) + 1}]
   }
   return $length
 }
