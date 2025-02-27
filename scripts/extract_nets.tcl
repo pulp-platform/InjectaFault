@@ -47,7 +47,7 @@ proc get_net_type {signal_name} {
   set type_string [string trim [string range $sig_description 1 [string wordend $sig_description 1]] " \n\r()\[\]{}:"]
 
   # In case the first word is a predicate, we strip this word from the front and then try again
-  if { $type_string == "Verilog" || $type_string == "Signed" || $type_string == "Integer"} {
+  if { $type_string == "Verilog" || $type_string == "Signed"} {
 
       # Strip first word from text
       set sig_description [string range $sig_description [string wordend $sig_description 1] [string length $sig_description]]
@@ -127,7 +127,7 @@ proc extract_netlists {item_list {injection_save 0}} {
   set extract_list [list]
   foreach item $item_list {
     set item_type [get_net_type $item]
-    if {$item_type == "Register" || $item_type == "Net" || $item_type == "Enum"} {
+    if {$item_type == "Register" || $item_type == "Net" || $item_type == "Enum" || $item_type == "Integer"} {
       lappend extract_list $item
     } elseif { $item_type == "Array"} {
       set first_net "$item\[0\]"
