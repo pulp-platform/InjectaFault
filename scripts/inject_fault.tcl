@@ -580,7 +580,7 @@ proc select_random_net {} {
 # flip a spefific bit of the given net name. returns [success, old_value, new_value] if the bit could be flipped
 proc flipbit {signal_name is_register} {
   # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
-  set old_value_string [examine -radixenumnumeric -binary $signal_name]
+  set old_value_string [examine -radixenumnumeric -binary -showbase $signal_name]
 
   # Guard against strange signals that can not be read.
   if {$old_value_string == "<N/A>"} {
@@ -711,7 +711,7 @@ proc flipbit {signal_name is_register} {
 
 proc unflip_bit {signal_name select_index expected_value flip_signal_name unflip_value_binary} {
   # Get the current value in binary format e.g. "6'b101010" - this works both for enums and normal signals
-  set old_value_string [examine -radixenumnumeric -binary $signal_name]
+  set old_value_string [examine -radixenumnumeric -binary -showbase $signal_name]
 
   # Split it up into length and bits e.g. length="6", old_value_binary="101010"
   # We set defaults here for the rare case that we get an enum which is outside of the enumerated names
