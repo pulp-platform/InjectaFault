@@ -697,12 +697,13 @@ proc flipbit {signal_name is_register} {
 
   # Check that it actually changed and set success if it did
   set success [expr {[string equal $old_value_symbolic $new_value_symbolic]} ? 0 : 1] 
-  set was_bluetooth 0
 
   # Set up unflip
   if {[info exists unflip_time] && $success == 1} {
     set unflip_command "::unflip_bit $signal_name $select_index $flip_value_binary $flip_signal_name $unflip_value_binary"
     when -label unflip "\$now == @$unflip_time" "$unflip_command"
+  } else {
+    echo "[time_ns $::now]: \[Fault Injection\] Unflip on $signal_name not necessary."
   }
 
   set result [list $success $old_value_symbolic $new_value_symbolic]
