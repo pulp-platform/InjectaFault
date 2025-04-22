@@ -157,7 +157,11 @@ proc get_state_netlist_recursive {base_path} {
 }
 
 proc get_state_netlist_recursive_filtered {base_path filter_list} {
-  set netlist [find signal -r $base_path/*_q];
+  if {$::use_netlist} {
+    set netlist [find signal -r $base_path/*_q_reg_*_/Q];
+  } else {
+    set netlist [find signal -r $base_path/*_q];
+  }
 
   # filter and sort the signals
   set netlist_filtered [list];
@@ -244,4 +248,22 @@ proc extract_all_nets_recursive_filtered {base_path filter_list} {
   set netlist_extracted [extract_netlists $netlist_filtered 1]
 
   return $netlist_extracted
+}
+
+proc get_all_nets_to_file {base_path file_path} {
+  find signal $base_path/* -file $file_path
+
+  set input [open $file_path r]
+  set lines [split [read $input] "\n"]
+  close $input
+
+  set output [open $file_path w]
+
+  foreach line $lines {
+      if {![regexp {n[0-9]+} $line]} {
+          puts $output $line
+      }
+  }
+
+  close $output
 }

@@ -170,11 +170,12 @@
 ##################################
 
 # General
-if {![info exists verbosity]}        { set verbosity          2   }
-if {![info exists log_injections]}   { set log_injections     0   }
-if {![info exists seed]}             { set seed           12345   }
-if {![info exists print_statistics]} { set print_statistics   1   }
-if {![info exists script_base_path]} { set script_base_path  "./" }
+if {![info exists verbosity]}         { set verbosity          2   }
+if {![info exists log_injections]}    { set log_injections     0   }
+if {![info exists seed]}              { set seed           12345   }
+if {![info exists print_statistics]}  { set print_statistics   1   }
+if {![info exists script_base_path]}  { set script_base_path  "./" }
+if {![info exists netlist_from_file]} { set netlist_from_file  0   }
 # Timing settings
 if {![info exists inject_start_time]}            { set inject_start_time          100ns }
 if {![info exists inject_stop_time]}             { set inject_stop_time             0   }
@@ -195,11 +196,12 @@ if {![info exists check_core_next_state_modification]} { set check_core_next_sta
 if {![info exists reg_to_sig_ratio]}                   { set reg_to_sig_ratio                   1 }
 if {![info exists use_bitwidth_as_weight]}             { set use_bitwidth_as_weight             0 }
 # Netlists
-if {![info exists inject_register_netlist]} { set inject_register_netlist [list] }
-if {![info exists inject_signals_netlist]}  { set inject_signals_netlist  [list] }
-if {![info exists output_netlist]}          { set output_netlist          [list] }
-if {![info exists next_state_netlist]}      { set next_state_netlist      [list] }
-if {![info exists assertion_disable_list]}  { set assertion_disable_list  [list] }
+if {![info exists inject_register_netlist]}          { set inject_register_netlist          [list] }
+if {![info exists inject_signals_netlist]}           { set inject_signals_netlist           [list] }
+if {![info exists inject_signals_netlist_from_file]} { set inject_signals_netlist_from_file [list] }
+if {![info exists output_netlist]}                   { set output_netlist                   [list] }
+if {![info exists next_state_netlist]}               { set next_state_netlist               [list] }
+if {![info exists assertion_disable_list]}           { set assertion_disable_list           [list] }
 
 # Additional checks
 if {[llength $forced_injection_times] != [llength $forced_injection_signals] && \
@@ -502,7 +504,11 @@ proc calculate_weight_by_width {netlist} {
 proc updated_inject_netlist {} {
   # print how many nets were found
   set num_reg_nets [llength $::inject_register_netlist]
-  set num_comb_nets [llength $::inject_signals_netlist]
+  if {!$::netlist_from_file} {
+    set num_comb_nets [llength $::inject_signals_netlist]
+  } else {
+    set num_comb_nets [lindex $::inject_signals_netlist_from_file 1]
+  }
   if {$::verbosity >= 1} {
     echo "\[Fault Injection\] Selected $num_reg_nets Registers for fault injection."
     echo "\[Fault Injection\] Selected $num_comb_nets combinatorial Signals for fault injection."
@@ -569,6 +575,27 @@ proc select_random_net {} {
   }
   set idx [expr int(rand()*[llength $selected_list])]
   set selected_net [lindex $selected_list $idx]
+  return [list $selected_net $is_register]
+}
+
+proc select_random_net_from_file {} {
+  # Choose between Register and Signal
+  if {[file exists [lindex $::inject_signals_netlist_from_file 0]]} {
+    set is_register 0
+    # Read a random line from the file
+    set line_count [lindex $::inject_signals_netlist_from_file 1]
+    set random_line_number [expr int(rand() * $line_count) + 1]
+    set file_id [open [lindex $::inject_signals_netlist_from_file 0] r]
+    for {set i 1} {$i < $random_line_number} {incr i} {
+      gets $file_id
+    }
+    set selected_net [gets $file_id]
+    close $file_id
+  } else {
+    error "Signal file not found at $::inject_signals_netlist_file_path"
+  }
+
+  # Return the result
   return [list $selected_net $is_register]
 }
 
@@ -730,7 +757,11 @@ proc inject_fault {include_in_statistics} {
   set attempts 0
   while {!$success && [incr attempts] < 50} {
     # get a random net
-    set net_selc_info [::select_random_net]
+    if {$::netlist_from_file} {
+      set net_selc_info [::select_random_net_from_file]
+    } else {
+      set net_selc_info [::select_random_net]
+    }
     set net_to_flip [lindex $net_selc_info 0]
     set is_register [lindex $net_selc_info 1]
     # Check if the selected net is allowed to be flipped
@@ -778,7 +809,8 @@ proc inject_fault {include_in_statistics} {
 proc ::inject_trigger {} {
   # check if any nets are selected for injection
   if {[llength $::inject_register_netlist] == 0 && \
-      [llength $::inject_signals_netlist] == 0} {
+      [llength $::inject_signals_netlist] == 0 && \
+      [lindex $::inject_signals_netlist_from_file 1] == 0}  {
     return
   }
   # check if we reached the injection limit
